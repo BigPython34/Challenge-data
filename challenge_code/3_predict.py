@@ -83,6 +83,11 @@ def predict_and_submit():
             0
         ]  # On récupère seulement le dataframe, pas l'imputer
 
+        # Sauvegarde du dataset enrichi de test au format CSV
+        enriched_test_csv = "datasets/enriched_test.csv"
+        df_test_enriched.to_csv(enriched_test_csv, index=False)
+        print(f"   ✅ Dataset enrichi de test exporté : {enriched_test_csv}")
+
         # Obtenir les colonnes center depuis les données d'entraînement
         df_enriched = dataset["df_enriched"]
         center_columns_train = [

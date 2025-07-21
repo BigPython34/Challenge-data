@@ -117,6 +117,17 @@ def prepare_and_save_dataset():
 
     print(f"   ✅ Résumé sauvegardé : {summary_path}")
 
+    # Sauvegarde du dataset enrichi au format CSV
+    enriched_train_csv = "datasets/enriched_train.csv"
+    # On ajoute la target au DataFrame enrichi
+    df_enriched_with_target = df_enriched.copy()
+    if "ID" in df_enriched_with_target.columns and "ID" in target_clean.columns:
+        df_enriched_with_target = df_enriched_with_target.merge(
+            target_clean[["ID", "OS_STATUS", "OS_YEARS"]], on="ID", how="left"
+        )
+    df_enriched_with_target.to_csv(enriched_train_csv, index=False)
+    print(f"   ✅ Dataset enrichi d'entraînement exporté : {enriched_train_csv}")
+
     print("\n" + "=" * 60)
     print("🎉 SCRIPT 1/3 TERMINÉ AVEC SUCCÈS !")
     print("✅ Dataset prêt pour l'entraînement")

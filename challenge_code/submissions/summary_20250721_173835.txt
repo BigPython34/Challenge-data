@@ -1,10 +1,10 @@
-=== RÉSUMÉ FINAL DES PRÉDICTIONS ===
-Date de génération : 2025-07-21T17:38:35.828054
+=== RÉSUMÉ DES PRÉDICTIONS ===
+Date de génération : 2025-07-21T17:38:35.795986
 Modèle utilisé : gradient_boosting
 Nombre de prédictions : 1193
 Fichier de soumission : submission_gradient_boosting_20250721_173835.csv
 
-Statistiques des prédictions :
+Distribution des prédictions :
 count    1193.000000
 mean        0.576320
 std         1.145697
@@ -15,7 +15,7 @@ min        -1.718825
 max         3.950598
 Name: risk_score, dtype: float64
 
-Aperçu des données :
+Aperçu des prédictions :
       ID  risk_score
 0   KYW1    1.398443
 1   KYW2    1.245551
