@@ -1,5 +1,5 @@
 # Métriques, validation croisée, etc.
-from sksurv.metrics import concordance_index_censored, concordance_index_ipcw
+from sksurv.metrics import concordance_index_ipcw
 
 from ..config import TAU
 

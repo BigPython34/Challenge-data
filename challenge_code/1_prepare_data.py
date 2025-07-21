@@ -39,9 +39,12 @@ def prepare_and_save_dataset():
     target_clean = clean_target_data(data["target_train"])
     print(f"   ✅ Target nettoyée : {len(target_clean)} échantillons")
 
-    # Préparer le dataset d'entraînement enrichi
+    # Préparer le dataset d'entraînement enrichi avec imputation avancée
     df_enriched, imputer = prepare_enriched_dataset(
-        data["clinical_train"], data["molecular_train"], target_clean
+        data["clinical_train"],
+        data["molecular_train"],
+        target_clean,
+        advanced_imputation_method="knn",  # Ou "rf", "cluster", "bagging"
     )
     print(f"   ✅ Dataset enrichi créé : {df_enriched.shape}")
 

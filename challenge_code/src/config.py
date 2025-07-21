@@ -35,3 +35,24 @@ IMPORTANT_GENES = [
 
 # Paramètres des modèles
 TAU = 7  # Pour le calcul du C-index
+
+# Paramètres des modèles de survie
+COX_PARAMS = {
+    "alpha": 1.0,
+}
+
+RSF_PARAMS = {
+    "n_estimators": 100,
+    "min_samples_split": 10,
+    "min_samples_leaf": 5,
+    "max_depth": 5,
+}
+
+GRADIENT_BOOSTING_PARAMS = {
+    "n_estimators": 850,
+    "learning_rate": 0.03160736770883459,
+    "max_depth": 3,
+    "subsample": 0.8118022194771892,
+    "min_samples_leaf": 4,
+    "min_samples_split": 4,
+}

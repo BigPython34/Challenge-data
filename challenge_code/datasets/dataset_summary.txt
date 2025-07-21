@@ -1,5 +1,5 @@
 === RÉSUMÉ DU DATASET PRÉPARÉ ===
-Date de création : 2025-07-21T17:38:24.367213
+Date de création : 2025-07-21T18:26:42.242377
 Échantillons d'entraînement : 2538
 Échantillons de validation : 635
 Nombre de features : 61

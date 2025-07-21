@@ -73,15 +73,15 @@ def predict_and_submit():
     print("\n🔧 3. Préparation des données de test...")
 
     try:
-        # Préparer les données de test avec le même preprocessing
+        # Préparer les données de test avec le même preprocessing et imputation avancée
         df_test_enriched = prepare_enriched_dataset(
             raw_data["clinical_test"],
             raw_data["molecular_test"],
             None,  # pas de target pour test
             imputer=imputer,
-        )[
-            0
-        ]  # On récupère seulement le dataframe, pas l'imputer
+            advanced_imputation_method="knn",  # Même méthode que l'entraînement
+            is_training=False,
+        )
 
         # Sauvegarde du dataset enrichi de test au format CSV
         enriched_test_csv = "datasets/enriched_test.csv"
