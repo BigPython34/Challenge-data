@@ -1,0 +1,68 @@
+=== RÉSUMÉ DU DATASET PRÉPARÉ ===
+Date de création : 2025-07-21T16:23:28.087966
+Échantillons d'entraînement : 2538
+Échantillons de validation : 635
+Nombre de features : 61
+
+Features disponibles :
+  1. BM_BLAST
+  2. WBC
+  3. ANC
+  4. MONOCYTES
+  5. HB
+  6. PLT
+  7. has_TP53_mutation
+  8. has_ASXL1_mutation
+  9. has_RUNX1_mutation
+ 10. has_FLT3_mutation
+ 11. has_NPM1_mutation
+ 12. has_IDH1_mutation
+ 13. has_IDH2_mutation
+ 14. has_DNMT3A_mutation
+ 15. has_TET2_mutation
+ 16. has_CEBPA_mutation
+ 17. has_SRSF2_mutation
+ 18. has_SF3B1_mutation
+ 19. Nmut
+ 20. vaf_mean
+ 21. vaf_max
+ 22. vaf_std
+ 23. frameshift_variant
+ 24. normal_karyotype
+ 25. complex_karyotype
+ 26. monosomy_7
+ 27. del_5q
+ 28. inv_3
+ 29. abn_17p
+ 30. trisomy_8
+ 31. t_9_11
+ 32. inv_16
+ 33. t_8_21
+ 34. ANC_to_WBC_ratio
+ 35. MONO_to_WBC_ratio
+ 36. MONO_to_LYM_ratio
+ 37. cytopenia_score
+ 38. pancytopenia
+ 39. center_CCH
+ 40. center_CGM
+ 41. center_DUS
+ 42. center_DUTH
+ 43. center_FLO
+ 44. center_FUCE
+ 45. center_GESMD
+ 46. center_HIAE
+ 47. center_HMS
+ 48. center_ICO
+ 49. center_IHBT
+ 50. center_KI
+ 51. center_MSK
+ 52. center_MUV
+ 53. center_PV
+ 54. center_REL
+ 55. center_RMCN
+ 56. center_ROM
+ 57. center_TUD
+ 58. center_UMG
+ 59. center_UOB
+ 60. center_UOXF
+ 61. center_VU

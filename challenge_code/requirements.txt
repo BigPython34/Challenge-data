@@ -1,0 +1,10 @@
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+scikit-learn>=1.0.0
+scikit-survival>=0.17.0
+joblib>=1.1.0
+optuna>=3.0.0
+shap>=0.41.0
+jupyter>=1.0.0

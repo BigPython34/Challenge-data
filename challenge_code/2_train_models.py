@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+Script 2/3 : Entraînement des modèles
+Charge le dataset préparé, entraîne les modèles et sauvegarde le meilleur
+"""
+import pickle
+import os
+import joblib
+import pandas as pd
+from src.modeling.train import train_and_save_all_models
+from src.modeling.evaluate import compare_models
+from src.utils.helpers import set_seed
+from src.visualization.plots import create_visualization_report
+
+
+def train_and_save_models():
+    """Entraîne tous les modèles et sauvegarde le meilleur"""
+    print("=== SCRIPT 2/3 : ENTRAÎNEMENT DES MODÈLES ===")
+    print("Objectif : Entraîner et sauvegarder les modèles")
+    print("=" * 60)
+
+    # 1. Vérification et chargement du dataset
+    print("\n📂 1. Chargement du dataset préparé...")
+    dataset_path = "datasets/training_dataset.pkl"
+
+    if not os.path.exists(dataset_path):
+        print("❌ ERREUR : Dataset préparé introuvable !")
+        print(f"   Fichier attendu : {dataset_path}")
+        print("   ➡️  Veuillez d'abord exécuter : python 1_prepare_data.py")
+        return None
+
+    try:
+        with open(dataset_path, "rb") as f:
+            dataset = pickle.load(f)
+        print(f"   ✅ Dataset chargé avec succès")
+        print(
+            f"   📊 {dataset['metadata']['n_samples_train']} échantillons d'entraînement"
+        )
+        print(f"   📊 {dataset['metadata']['n_features']} features")
+    except Exception as e:
+        print(f"❌ ERREUR lors du chargement : {e}")
+        return None
+
+    # Extraire les données
+    X_train = dataset["X_train"]
+    X_test = dataset["X_test"]
+    y_train = dataset["y_train"]
+    y_test = dataset["y_test"]
+    features = dataset["features"]
+
+    # 2. Configuration
+    set_seed()
+
+    # 3. Entraînement des modèles
+    print("\n🤖 2. Entraînement des modèles...")
+    print("   Entraînement en cours (cela peut prendre plusieurs minutes)...")
+
+    try:
+        models = train_and_save_all_models(X_train, y_train)
+        print(f"   ✅ {len(models)} modèles entraînés avec succès")
+    except Exception as e:
+        print(f"❌ ERREUR lors de l'entraînement : {e}")
+        return None
+
+    # 4. Évaluation et sélection du meilleur modèle
+    print("\n📈 3. Évaluation des modèles...")
+
+    try:
+        results, best_model_name = compare_models(
+            models, X_train, y_train, X_test, y_test
+        )
+        print(f"   ✅ Évaluation terminée")
+        print(f"   🏆 Meilleur modèle : {best_model_name}")
+
+        # Afficher les performances
+        print(f"\n   📊 Performances des modèles :")
+        for model_name, metrics in results.items():
+            if "test_accuracy" in metrics:
+                print(f"      • {model_name}: {metrics['test_accuracy']:.3f}")
+    except Exception as e:
+        print(f"❌ ERREUR lors de l'évaluation : {e}")
+        return None
+
+    # 5. Sauvegarde du package modèle complet
+    print("\n💾 4. Sauvegarde du package modèle...")
+
+    # Créer le répertoire de modèles
+    os.makedirs("trained_models", exist_ok=True)
+
+    # Package modèle complet
+    model_package = {
+        "best_model": models[best_model_name],
+        "best_model_name": best_model_name,
+        "all_models": models,
+        "evaluation_results": results,
+        "features": features,
+        "imputer": dataset["imputer"],
+        "training_metadata": {
+            "training_date": pd.Timestamp.now().isoformat(),
+            "n_training_samples": len(X_train),
+            "n_features": len(features),
+            "best_model_accuracy": results[best_model_name].get("test_accuracy", "N/A"),
+            "feature_names": features,
+        },
+    }
+
+    # Sauvegarder le package complet
+    package_path = "trained_models/model_package.pkl"
+    with open(package_path, "wb") as f:
+        pickle.dump(model_package, f)
+
+    print(f"   ✅ Package modèle sauvegardé : {package_path}")
+
+    # Sauvegarder aussi le meilleur modèle seul (pour utilisation rapide)
+    best_model_path = "trained_models/best_model.joblib"
+    joblib.dump(models[best_model_name], best_model_path)
+    print(f"   ✅ Meilleur modèle sauvegardé : {best_model_path}")
+
+    # Sauvegarder les métadonnées lisibles
+    metadata_path = "trained_models/model_info.txt"
+    with open(metadata_path, "w") as f:
+        f.write("=== INFORMATIONS DU MODÈLE ENTRAÎNÉ ===\n")
+        f.write(
+            f"Date d'entraînement : {model_package['training_metadata']['training_date']}\n"
+        )
+        f.write(f"Meilleur modèle : {best_model_name}\n")
+        f.write(f"Précision : {results[best_model_name].get('test_accuracy', 'N/A')}\n")
+        f.write(f"Échantillons d'entraînement : {len(X_train)}\n")
+        f.write(f"Nombre de features : {len(features)}\n")
+        f.write(f"\nPerformances de tous les modèles :\n")
+        for model_name, metrics in results.items():
+            if "test_accuracy" in metrics:
+                f.write(f"  • {model_name}: {metrics['test_accuracy']:.3f}\n")
+
+    print(f"   ✅ Métadonnées sauvegardées : {metadata_path}")
+    print(
+        f"   📁 Taille du package : {os.path.getsize(package_path) / 1024 / 1024:.2f} MB"
+    )
+
+    # 6. Génération du rapport de visualisation
+    print("\n📊 5. Génération du rapport de visualisation...")
+    try:
+        create_visualization_report(models, results, X_test, y_test)
+        print("   ✅ Rapport de visualisation généré")
+    except Exception as e:
+        print(f"   ⚠️  Avertissement rapport visualisation : {e}")
+
+    print("\n" + "=" * 60)
+    print("🎉 SCRIPT 2/3 TERMINÉ AVEC SUCCÈS !")
+    print(f"🏆 Meilleur modèle : {best_model_name}")
+    print("✅ Modèles prêts pour les prédictions")
+    print("➡️  Prochaine étape : python 3_predict.py")
+    print("=" * 60)
+
+    return model_package
+
+
+if __name__ == "__main__":
+    train_and_save_models()
