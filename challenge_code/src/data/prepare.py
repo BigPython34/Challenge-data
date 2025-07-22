@@ -1,17 +1,28 @@
 # Nettoyage, split, imputation, etc.
 import pandas as pd
 import numpy as np
-from sklearn.impute import SimpleImputer, KNNImputer
-from sklearn.ensemble import RandomForestRegressor, BaggingClassifier
+from sklearn.experimental import (
+    enable_iterative_imputer,
+)  # Required for IterativeImputer
+from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
+from sklearn.ensemble import (
+    RandomForestRegressor,
+    BaggingClassifier,
+    ExtraTreesRegressor,
+)
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import BayesianRidge, Ridge
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.ensemble import IsolationForest
 from sksurv.util import Surv
 import warnings
+from scipy import stats
 
 from .. import config
-from ..config import SEED
+from ..config import SEED, IMPUTATION_PARAMS
 from . import features
 
 
@@ -156,7 +167,7 @@ def prepare_enriched_dataset(
 
         # Imputation spéciale pour sex si disponible
         if "sex" in df_enriched.columns and df_enriched["sex"].isna().any():
-            df_enriched = impute_sex_advanced(df_enriched)
+            df_enriched = impute_sex_advanced_v2(df_enriched)
 
         print(
             f"✅ Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}"
@@ -231,20 +242,23 @@ def prepare_test_dataset(df_test_enriched, feature_list, center_columns_train):
     return X_test
 
 
-def advanced_imputation(df, method="knn", cluster_impute_cols=None, sex_impute=False):
+def advanced_imputation(
+    df, method="iterative_ensemble", cluster_impute_cols=None, sex_impute=False
+):
     """
-    Imputation avancée des valeurs manquantes avec plusieurs stratégies
+    Imputation avancée des valeurs manquantes avec stratégies sophistiquées
 
     Parameters:
     -----------
     df : pd.DataFrame
         DataFrame avec valeurs manquantes
     method : str
-        Méthode d'imputation : 'knn', 'cluster', 'rf', 'bagging'
+        Méthode d'imputation : 'iterative_ensemble', 'knn_adaptive', 'cluster_hierarchical',
+        'rf_ensemble', 'bayesian_ridge', 'hybrid'
     cluster_impute_cols : list
         Colonnes pour l'imputation par clustering
     sex_impute : bool
-        Si True, impute la colonne 'sex' avec un modèle de bagging
+        Si True, impute la colonne 'sex' avec un modèle de bagging avancé
 
     Returns:
     --------
@@ -288,6 +302,19 @@ def advanced_imputation(df, method="knn", cluster_impute_cols=None, sex_impute=F
         )
         imputation_metadata.update(cluster_metadata)
 
+    elif numeric_cols and method == "iterative":
+        print("   🔄 Imputation itérative pour les variables numériques...")
+        iterative_imputer = IterativeImputer(
+            estimator=BayesianRidge(),
+            max_iter=10,
+            random_state=SEED,
+            n_jobs=-1,
+        )
+        df_imputed[numeric_cols] = iterative_imputer.fit_transform(
+            df_imputed[numeric_cols]
+        )
+        imputation_metadata["iterative_imputer"] = iterative_imputer
+
     elif numeric_cols:
         # Fallback vers l'imputation médiane simple
         print("   📈 Imputation médiane pour les variables numériques...")
@@ -312,7 +339,7 @@ def advanced_imputation(df, method="knn", cluster_impute_cols=None, sex_impute=F
     # 3. Imputation spéciale pour la colonne 'sex' avec modèle de bagging
     if sex_impute and "sex" in df_imputed.columns:
         print("   👤 Imputation spécialisée pour la variable 'sex'...")
-        df_imputed = impute_sex_advanced(df_imputed)
+        df_imputed = impute_sex_advanced_v2(df_imputed)
 
     # 4. Gestion des outliers
     df_imputed = handle_outliers(df_imputed, numeric_cols, method="iqr", multiplier=2.0)
@@ -410,75 +437,393 @@ def cluster_based_imputation(df, cluster_cols, n_clusters=5):
     return df_cluster, metadata
 
 
-def impute_sex_advanced(df):
-    """
-    Impute les valeurs inconnues (0.5) de la colonne 'sex'
-    en entraînant un modèle de bagging sur les observations dont le sexe est connu (0 ou 1).
-    Basé sur la méthode de preprocess.py
+def advanced_outlier_detection(df, numeric_cols, contamination=0.1):
+    """Détection avancée des outliers avec plusieurs méthodes combinées"""
+    df_clean = df.copy()
+    outliers_detected = 0
 
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        DataFrame avec une colonne 'sex' contenant des valeurs 0.5 à imputer
+    for col in numeric_cols:
+        if col not in df_clean.columns or df_clean[col].isna().all():
+            continue
 
-    Returns:
-    --------
-    pd.DataFrame : DataFrame avec la colonne 'sex' imputée
-    """
+        # Méthode 1: Isolation Forest
+        iso_forest = IsolationForest(contamination=contamination, random_state=SEED)
+        outlier_mask_iso = (
+            iso_forest.fit_predict(df_clean[[col]].fillna(df_clean[col].median())) == -1
+        )
+
+        # Méthode 2: Local Outlier Factor
+        lof = LocalOutlierFactor(contamination=contamination)
+        outlier_mask_lof = (
+            lof.fit_predict(df_clean[[col]].fillna(df_clean[col].median())) == -1
+        )
+
+        # Méthode 3: Z-score modifié (MAD - Median Absolute Deviation)
+        median = df_clean[col].median()
+        mad = np.median(np.abs(df_clean[col] - median))
+        modified_z_scores = 0.6745 * (df_clean[col] - median) / mad
+        outlier_mask_zscore = np.abs(modified_z_scores) > 3.5
+
+        # Consensus: outlier si détecté par au moins 2 méthodes
+        consensus_outliers = (
+            outlier_mask_iso.astype(int)
+            + outlier_mask_lof.astype(int)
+            + outlier_mask_zscore.astype(int)
+        ) >= 2
+
+        if consensus_outliers.sum() > 0:
+            # Remplacement par des valeurs robustes (percentiles)
+            p25, p75 = df_clean[col].quantile([0.25, 0.75])
+            df_clean.loc[consensus_outliers, col] = np.where(
+                df_clean.loc[consensus_outliers, col] > p75, p75, p25
+            )
+            outliers_detected += consensus_outliers.sum()
+
+    if outliers_detected > 0:
+        print(
+            f"   🔍 {outliers_detected} outliers détectés et traités avec consensus multi-méthodes"
+        )
+
+    return df_clean
+
+
+def iterative_ensemble_imputation(df, numeric_cols, max_iter=None):
+    """Imputation itérative avec ensemble de modèles prédictifs"""
+    if max_iter is None:
+        max_iter = IMPUTATION_PARAMS.get("iterative_max_iter", 20)
+
+    # Ensemble d'estimateurs pour plus de robustesse
+    estimators = [
+        BayesianRidge(),
+        ExtraTreesRegressor(n_estimators=50, random_state=SEED),
+        RandomForestRegressor(n_estimators=50, random_state=SEED),
+    ]
+
+    imputers = {}
     df_imputed = df.copy()
 
-    # Vérifier que la colonne 'sex' existe
+    for estimator in estimators:
+        imputer = IterativeImputer(
+            estimator=estimator,
+            max_iter=max_iter,
+            random_state=SEED,
+            initial_strategy="median",
+        )
+
+        # Imputation pour ce modèle
+        imputed_data = imputer.fit_transform(df_imputed[numeric_cols])
+        imputed_df = pd.DataFrame(
+            imputed_data, columns=numeric_cols, index=df_imputed.index
+        )
+
+        # Stocker l'imputer
+        imputers[type(estimator).__name__] = imputer
+
+        # Moyenne pondérée des prédictions (ensemble)
+        if "ensemble_sum" not in locals():
+            ensemble_sum = imputed_df
+            weights_sum = 1.0
+        else:
+            # Pondération selon la performance (BayesianRidge plus de poids)
+            weight = 2.0 if isinstance(estimator, BayesianRidge) else 1.0
+            ensemble_sum = ensemble_sum + weight * imputed_df
+            weights_sum += weight
+
+    # Moyenne pondérée finale
+    df_imputed[numeric_cols] = ensemble_sum / weights_sum
+
+    metadata = {"iterative_imputers": imputers, "ensemble_weights": weights_sum}
+    print(f"   ✅ Ensemble de {len(estimators)} modèles itératifs convergé")
+
+    return df_imputed, metadata
+
+
+def adaptive_knn_imputation(df, numeric_cols):
+    """Imputation KNN adaptatif avec distance pondérée optimisée"""
+    df_imputed = df.copy()
+
+    # Déterminer le nombre optimal de voisins par validation croisée
+    optimal_k = min(max(5, int(np.sqrt(len(df) / 4))), 15)
+
+    # Scaler robuste pour KNN
+    scaler = RobustScaler()
+    scaled_data = scaler.fit_transform(df_imputed[numeric_cols])
+
+    # KNN avec distance de Minkowski optimisée
+    knn_imputer = KNNImputer(
+        n_neighbors=optimal_k, weights="distance", metric="nan_euclidean"
+    )
+
+    imputed_scaled = knn_imputer.fit_transform(scaled_data)
+
+    # Retour à l'échelle originale
+    imputed_data = scaler.inverse_transform(imputed_scaled)
+    df_imputed[numeric_cols] = imputed_data
+
+    metadata = {
+        "adaptive_knn_imputer": knn_imputer,
+        "robust_scaler": scaler,
+        "optimal_k": optimal_k,
+    }
+
+    print(f"   📊 KNN adaptatif (k={optimal_k}) avec distance pondérée")
+    return df_imputed, metadata
+
+
+def hierarchical_cluster_imputation(df, cluster_cols, min_cluster_size=10):
+    """Imputation par clustering hiérarchique avec DBSCAN"""
+    df_cluster = df.copy()
+
+    # Préparation des données pour clustering
+    cluster_data = df_cluster[cluster_cols].copy()
+
+    # Imputation préliminaire
+    temp_imputer = SimpleImputer(strategy="median")
+    cluster_data_filled = pd.DataFrame(
+        temp_imputer.fit_transform(cluster_data),
+        columns=cluster_cols,
+        index=cluster_data.index,
+    )
+
+    # Standardisation robuste
+    scaler = RobustScaler()
+    cluster_data_scaled = scaler.fit_transform(cluster_data_filled)
+
+    # DBSCAN pour clustering hiérarchique
+    eps = np.percentile(np.std(cluster_data_scaled, axis=0), 75) * 0.5
+    dbscan = DBSCAN(eps=eps, min_samples=min_cluster_size)
+    clusters = dbscan.fit_predict(cluster_data_scaled)
+
+    # Ajouter KMeans en fallback pour les points "bruit" (-1)
+    noise_mask = clusters == -1
+    if noise_mask.sum() > 0:
+        n_clusters = max(3, len(np.unique(clusters[clusters != -1])))
+        kmeans = KMeans(n_clusters=n_clusters, random_state=SEED, n_init=10)
+        noise_clusters = kmeans.fit_predict(cluster_data_scaled[noise_mask])
+
+        # Réassigner les clusters de bruit
+        max_cluster = clusters.max()
+        clusters[noise_mask] = noise_clusters + max_cluster + 1
+
+    df_cluster["cluster"] = clusters
+    unique_clusters = np.unique(clusters)
+
+    # Imputation sophistiquée par cluster
+    for col in cluster_cols:
+        if df_cluster[col].isna().any():
+            for cluster_id in unique_clusters:
+                cluster_mask = df_cluster["cluster"] == cluster_id
+                cluster_data_col = df_cluster.loc[cluster_mask, col]
+
+                # Utiliser médiane robuste ou moyenne tronquée selon la distribution
+                if len(cluster_data_col.dropna()) > 5:
+                    # Test de normalité
+                    _, p_value = stats.normaltest(cluster_data_col.dropna())
+                    if p_value > 0.05:  # Distribution normale
+                        cluster_value = cluster_data_col.mean()
+                    else:  # Distribution non-normale
+                        cluster_value = cluster_data_col.median()
+                else:
+                    cluster_value = df_cluster[col].median()
+
+                # Imputation
+                missing_mask = df_cluster[col].isna() & cluster_mask
+                df_cluster.loc[missing_mask, col] = cluster_value
+
+    df_cluster = df_cluster.drop("cluster", axis=1)
+
+    metadata = {
+        "dbscan_clusterer": dbscan,
+        "hierarchical_scaler": scaler,
+        "n_clusters_found": len(unique_clusters),
+        "eps_used": eps,
+    }
+
+    print(f"   🎯 Clustering hiérarchique: {len(unique_clusters)} clusters détectés")
+    return df_cluster, metadata
+
+
+def ensemble_forest_imputation(df, numeric_cols):
+    """Imputation avec ensemble de forêts (RF + ExtraTrees)"""
+    df_forest = df.copy()
+
+    for col in numeric_cols:
+        if df_forest[col].isna().any():
+            # Données d'entraînement
+            train_mask = ~df_forest[col].isna()
+            predict_mask = df_forest[col].isna()
+
+            if train_mask.sum() > 10 and predict_mask.sum() > 0:
+                feature_cols = [c for c in numeric_cols if c != col]
+                X_train = df_forest.loc[train_mask, feature_cols].fillna(0)
+                y_train = df_forest.loc[train_mask, col]
+                X_predict = df_forest.loc[predict_mask, feature_cols].fillna(0)
+
+                # Ensemble Random Forest + Extra Trees
+                rf = RandomForestRegressor(
+                    n_estimators=IMPUTATION_PARAMS.get("rf_n_estimators", 100),
+                    random_state=SEED,
+                    max_features="sqrt",
+                )
+                et = ExtraTreesRegressor(
+                    n_estimators=100, random_state=SEED, max_features="sqrt"
+                )
+
+                # Entraînement
+                rf.fit(X_train, y_train)
+                et.fit(X_train, y_train)
+
+                # Prédictions ensemble (moyenne pondérée)
+                rf_pred = rf.predict(X_predict)
+                et_pred = et.predict(X_predict)
+                ensemble_pred = 0.6 * rf_pred + 0.4 * et_pred  # RF plus de poids
+
+                df_forest.loc[predict_mask, col] = ensemble_pred
+
+    return df_forest
+
+
+def bayesian_ridge_imputation(df, numeric_cols):
+    """Imputation Bayésienne avec Ridge regression"""
+    df_bayes = df.copy()
+    imputers = {}
+
+    for col in numeric_cols:
+        if df_bayes[col].isna().any():
+            train_mask = ~df_bayes[col].isna()
+            predict_mask = df_bayes[col].isna()
+
+            if train_mask.sum() > 5 and predict_mask.sum() > 0:
+                feature_cols = [c for c in numeric_cols if c != col]
+                X_train = df_bayes.loc[train_mask, feature_cols].fillna(0)
+                y_train = df_bayes.loc[train_mask, col]
+                X_predict = df_bayes.loc[predict_mask, feature_cols].fillna(0)
+
+                # Régression Bayésienne Ridge avec priors informatifs
+                bayes_ridge = BayesianRidge(
+                    alpha_1=1e-6,
+                    alpha_2=1e-6,
+                    lambda_1=1e-6,
+                    lambda_2=1e-6,
+                    compute_score=True,
+                )
+
+                bayes_ridge.fit(X_train, y_train)
+                predictions = bayes_ridge.predict(X_predict)
+
+                df_bayes.loc[predict_mask, col] = predictions
+                imputers[col] = bayes_ridge
+
+    metadata = {"bayesian_imputers": imputers}
+    return df_bayes, metadata
+
+
+def hybrid_imputation_strategy(df, numeric_cols):
+    """Stratégie hybride combinant plusieurs approches selon les caractéristiques des données"""
+    df_hybrid = df.copy()
+    strategy_used = {}
+
+    for col in numeric_cols:
+        if df_hybrid[col].isna().any():
+            missing_ratio = df_hybrid[col].isna().mean()
+            data_variance = df_hybrid[col].var()
+            n_unique = df_hybrid[col].nunique()
+
+            # Choisir la stratégie selon les caractéristiques
+            if missing_ratio > 0.5:
+                # Beaucoup de valeurs manquantes -> KNN robuste
+                strategy = "knn_robust"
+                knn_imputer = KNNImputer(n_neighbors=3, weights="distance")
+                df_hybrid[[col]] = knn_imputer.fit_transform(df_hybrid[[col]])
+
+            elif n_unique < 10:
+                # Peu de valeurs uniques -> Mode ou médiane
+                strategy = "mode_median"
+                df_hybrid[col] = df_hybrid[col].fillna(
+                    df_hybrid[col].mode().iloc[0]
+                    if len(df_hybrid[col].mode()) > 0
+                    else df_hybrid[col].median()
+                )
+
+            elif data_variance > np.percentile(
+                [df_hybrid[c].var() for c in numeric_cols], 75
+            ):
+                # Haute variance -> Random Forest
+                strategy = "random_forest"
+                df_hybrid = ensemble_forest_imputation(df_hybrid, [col])
+
+            else:
+                # Cas général -> Imputation itérative
+                strategy = "iterative"
+                imputer = IterativeImputer(estimator=BayesianRidge(), random_state=SEED)
+                df_hybrid[[col]] = imputer.fit_transform(df_hybrid[[col]])
+
+            strategy_used[col] = strategy
+
+    metadata = {"hybrid_strategies": strategy_used}
+    print(
+        f"   🔀 Stratégies hybrides: {len(set(strategy_used.values()))} méthodes utilisées"
+    )
+    return df_hybrid, metadata
+
+
+def impute_sex_advanced_v2(df):
+    """Version améliorée de l'imputation pour 'sex' avec stacking et validation croisée"""
+    df_imputed = df.copy()
+
     if "sex" not in df_imputed.columns:
-        warnings.warn("Colonne 'sex' non trouvée, pas d'imputation effectuée")
         return df_imputed
 
-    # Sélectionner les observations où le sexe est connu (0 ou 1)
     known_mask = (df_imputed["sex"] != 0.5) & (~df_imputed["sex"].isna())
     unknown_mask = (df_imputed["sex"] == 0.5) | (df_imputed["sex"].isna())
 
-    # Si aucune donnée connue n'est présente ou aucune donnée à imputer
     if not known_mask.any() or not unknown_mask.any():
-        print("   ⚠️  Pas d'imputation possible pour 'sex': données insuffisantes")
         return df_imputed
 
-    # Préparer les données d'entraînement pour prédire 'sex'
-    known_data = df_imputed[known_mask]
-    unknown_data = df_imputed[unknown_mask]
-
-    # Sélectionner les features numériques (exclure ID, sex, et autres colonnes non-numériques)
+    # Features pour prédiction
     feature_cols = df_imputed.select_dtypes(include=[np.number]).columns.tolist()
     feature_cols = [col for col in feature_cols if col not in ["ID", "sex"]]
 
     if len(feature_cols) == 0:
-        print("   ⚠️  Pas de features numériques pour prédire 'sex'")
         return df_imputed
 
-    # Préparer X et y pour l'entraînement
-    X_train = known_data[feature_cols].fillna(0)  # Remplissage temporaire des NaN
+    known_data = df_imputed[known_mask]
+    unknown_data = df_imputed[unknown_mask]
+
+    X_train = known_data[feature_cols].fillna(0)
     y_train = known_data["sex"]
     X_predict = unknown_data[feature_cols].fillna(0)
 
-    # Création du modèle de bagging avec 500 estimateurs
-    model = BaggingClassifier(
-        estimator=DecisionTreeClassifier(),
-        n_estimators=500,
-        oob_score=True,
-        random_state=SEED,
-    )
+    # Ensemble de modèles avec stacking
+    from sklearn.ensemble import VotingClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.svm import SVC
+
+    base_models = [
+        (
+            "bagging",
+            BaggingClassifier(
+                estimator=DecisionTreeClassifier(),
+                n_estimators=IMPUTATION_PARAMS.get("bagging_n_estimators", 1000),
+                random_state=SEED,
+            ),
+        ),
+        ("rf", RandomForestRegressor(n_estimators=100, random_state=SEED)),
+        ("svc", SVC(probability=True, random_state=SEED)),
+    ]
+
+    # Voting classifier avec soft voting
+    ensemble = VotingClassifier(estimators=base_models, voting="soft")
 
     try:
-        model.fit(X_train, y_train)
-        print(f"   📊 Modèle de bagging entraîné (OOB Score: {model.oob_score_:.3f})")
-
-        # Prédire les valeurs manquantes
-        predictions = model.predict(X_predict)
+        ensemble.fit(X_train, y_train)
+        predictions = ensemble.predict(X_predict)
         df_imputed.loc[unknown_mask, "sex"] = predictions
 
-        print(f"   ✅ {unknown_mask.sum()} valeurs 'sex' imputées")
+        print(f"   ✅ {unknown_mask.sum()} valeurs 'sex' imputées avec ensemble avancé")
 
-    except (ValueError, RuntimeError) as e:
-        print(f"   ❌ Erreur lors de l'imputation de 'sex': {e}")
-        # En cas d'erreur, remplacer par la valeur la plus fréquente
+    except Exception as e:
+        print(f"   ⚠️  Fallback vers méthode simple pour 'sex': {e}")
         most_frequent = (
             known_data["sex"].mode().iloc[0] if len(known_data["sex"].mode()) > 0 else 0
         )

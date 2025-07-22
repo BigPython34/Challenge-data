@@ -9,6 +9,14 @@ import joblib
 import pandas as pd
 from src.data.prepare import prepare_enriched_dataset, prepare_test_dataset
 
+# Import pour PyCox DeepSurv si disponible
+try:
+    from src.modeling.train import PyCoxWrapper
+
+    PYCOX_AVAILABLE = True
+except ImportError:
+    PYCOX_AVAILABLE = False
+
 
 def predict_and_submit():
     """Applique le modèle entraîné aux données de test et génère les soumissions"""
@@ -79,7 +87,7 @@ def predict_and_submit():
             raw_data["molecular_test"],
             None,  # pas de target pour test
             imputer=imputer,
-            advanced_imputation_method="knn",  # Même méthode que l'entraînement
+            advanced_imputation_method="iterative_ensemble",  # Même méthode que l'entraînement
             is_training=False,
         )
 
@@ -111,7 +119,13 @@ def predict_and_submit():
 
     try:
         # Prédictions avec le meilleur modèle directement
-        predictions = best_model.predict(X_test_final)
+        # Vérifier si c'est un modèle PyCox (wrapper spécial)
+        if hasattr(best_model, "__class__") and "PyCoxWrapper" in str(type(best_model)):
+            print("   🧠 Modèle PyCox DeepSurv détecté - prédictions spécialisées")
+            predictions = best_model.predict(X_test_final)
+        else:
+            # Modèles scikit-survival standards
+            predictions = best_model.predict(X_test_final)
 
         # Créer le DataFrame de soumission
         submission_df = pd.DataFrame(
@@ -119,9 +133,11 @@ def predict_and_submit():
         )
 
         print(f"   ✅ Prédictions générées : {len(submission_df)} échantillons")
+        print(f"   📊 Type du modèle : {type(best_model).__name__}")
 
     except Exception as e:
         print(f"❌ ERREUR lors des prédictions : {e}")
+        print(f"   Type de modèle : {type(best_model)}")
         return None
 
     # 5. Sauvegarde des résultats

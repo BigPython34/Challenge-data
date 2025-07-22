@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Script 1/3 : Préparation des données
+Script 1/3 :    # Préparer le dataset d'entraînement enrichi avec imputation avancée
+    df_enriched, imputer = prepare_enriched_dataset(
+        data["clinical_train"],
+        data["molecular_train"],
+        target_clean,
+        advanced_imputation_method="iterative_ensemble"  # Nouvelle méthode la plus sophistiquée
+    )ation des données
 Charge, nettoie et prépare les données d'entraînement et de test
 Sauvegarde un dataset prêt pour l'entraînement
 """
