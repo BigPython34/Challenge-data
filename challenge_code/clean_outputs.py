@@ -21,7 +21,7 @@ def clean_directory(directory, pattern="*", extensions_only=False):
             files.extend(Path(directory).rglob(f"*{ext}"))
     else:
         files = list(Path(directory).glob(pattern))
-    
+
     if not files:
         print(f"📁 Aucun fichier à nettoyer dans {directory}")
         return 0
@@ -40,14 +40,14 @@ def clean_directory(directory, pattern="*", extensions_only=False):
                 cleaned += 1
         except (OSError, PermissionError) as e:
             print(f"  ❌ Erreur lors de la suppression de {file}: {e}")
-    
+
     return cleaned
 
 
 def clean_empty_directories():
     """Supprime les dossiers vides (sauf ceux avec .gitkeep)"""
     directories_to_check = ["models", "submissions", "datasets"]
-    
+
     for directory in directories_to_check:
         if os.path.exists(directory):
             try:
@@ -65,35 +65,41 @@ def main():
     """Nettoie tous les fichiers de sortie"""
     print("🧹 NETTOYAGE DES FICHIERS DE SORTIE")
     print("=" * 50)
-    
+
     total_cleaned = 0
-    
+
     # Nettoyer les modèles
     print("\n🤖 Nettoyage des modèles...")
-    total_cleaned += clean_directory("models", ["*.pkl", "*.joblib", "*.h5"], extensions_only=True)
-    
+    total_cleaned += clean_directory(
+        "models", ["*.pkl", "*.joblib", "*.h5"], extensions_only=True
+    )
+
     # Nettoyer les soumissions
     print("\n📤 Nettoyage des soumissions...")
     total_cleaned += clean_directory("submissions", "*.csv")
     total_cleaned += clean_directory("submissions", "*.txt")
-    
+
     # Nettoyer les datasets enrichis
     print("\n📊 Nettoyage des datasets...")
-    total_cleaned += clean_directory("datasets", ["*.csv", "*.pkl"], extensions_only=True)
-    
+    total_cleaned += clean_directory(
+        "datasets", ["*.csv", "*.pkl"], extensions_only=True
+    )
+
     # Nettoyer les résultats/figures (si présents)
     print("\n📈 Nettoyage des visualisations...")
-    total_cleaned += clean_directory(".", ["*.png", "*.jpg", "*.pdf"], extensions_only=True)
-    
+    total_cleaned += clean_directory(
+        ".", ["*.png", "*.jpg", "*.pdf"], extensions_only=True
+    )
+
     # Nettoyer les fichiers cache Python
     print("\n🐍 Nettoyage des caches Python...")
     total_cleaned += clean_directory(".", "__pycache__")
     total_cleaned += clean_directory("src", "__pycache__")
-    
+
     # Vérifier les dossiers vides
     print("\n📁 Vérification des dossiers...")
     clean_empty_directories()
-    
+
     print("=" * 50)
     print(f"✅ NETTOYAGE TERMINÉ - {total_cleaned} éléments supprimés")
     print("\n💡 Le projet est maintenant dans un état propre")

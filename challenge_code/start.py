@@ -26,7 +26,7 @@ def check_python_version():
         print("❌ Python 3.8+ requis")
         print(f"   Version actuelle: {version.major}.{version.minor}")
         return False
-    
+
     print(f"✅ Python {version.major}.{version.minor}.{version.micro}")
     return True
 
@@ -36,22 +36,22 @@ def check_data_files():
     data_files = [
         "datas/X_train/clinical_train.csv",
         "datas/X_train/molecular_train.csv",
-        "datas/X_test/clinical_test.csv", 
+        "datas/X_test/clinical_test.csv",
         "datas/X_test/molecular_test.csv",
-        "datas/target_train.csv"
+        "datas/target_train.csv",
     ]
-    
+
     missing = []
     for file_path in data_files:
         if not Path(file_path).exists():
             missing.append(file_path)
-    
+
     if missing:
         print("❌ Fichiers de données manquants:")
         for file_path in missing:
             print(f"   • {file_path}")
         return False
-    
+
     print("✅ Tous les fichiers de données sont présents")
     return True
 
@@ -72,25 +72,25 @@ def run_command(command, description):
 def main():
     """Fonction principale du script de démarrage"""
     print_banner()
-    
+
     print("\n📋 VÉRIFICATIONS PRÉLIMINAIRES")
     print("-" * 40)
-    
+
     # Vérifications de base
     checks = [
         ("Version Python", check_python_version),
-        ("Fichiers de données", check_data_files)
+        ("Fichiers de données", check_data_files),
     ]
-    
+
     for check_name, check_func in checks:
         print(f"\n🔍 {check_name}:")
         if not check_func():
             print(f"\n❌ Vérification échouée: {check_name}")
             print("🛠️  Corrigez les erreurs avant de continuer")
             return 1
-    
+
     print("\n✅ Toutes les vérifications passées!")
-    
+
     # Menu interactif
     while True:
         print("\n" + "🚀 QUE VOULEZ-VOUS FAIRE ?")
@@ -104,68 +104,77 @@ def main():
         print("   c. Générer les prédictions")
         print("5. 🧹 Nettoyer les sorties")
         print("6. ❌ Quitter")
-        
+
         choice = input("\n👉 Votre choix (1-6): ").strip()
-        
+
         if choice == "1":
             print("\n📦 INSTALLATION DES DÉPENDANCES")
             print("-" * 40)
-            success = run_command([sys.executable, "install_deps.py"], 
-                                 "Installation des dépendances")
+            success = run_command(
+                [sys.executable, "install_deps.py"], "Installation des dépendances"
+            )
             if not success:
                 print("💡 Essayez manuellement: pip install -r requirements.txt")
-        
+
         elif choice == "2":
             print("\n🧪 TEST DE LA STRUCTURE")
             print("-" * 40)
-            run_command([sys.executable, "test_structure.py"], 
-                       "Test de la structure du projet")
-        
+            run_command(
+                [sys.executable, "test_structure.py"], "Test de la structure du projet"
+            )
+
         elif choice == "3":
             print("\n🚀 PIPELINE COMPLET")
             print("-" * 40)
             print("⚠️  Cette opération peut prendre 10-30 minutes")
             confirm = input("Continuer ? (o/N): ").strip().lower()
-            if confirm in ['o', 'oui', 'y', 'yes']:
-                run_command([sys.executable, "main.py"], 
-                           "Exécution du pipeline complet")
+            if confirm in ["o", "oui", "y", "yes"]:
+                run_command(
+                    [sys.executable, "main.py"], "Exécution du pipeline complet"
+                )
             else:
                 print("🔙 Opération annulée")
-        
+
         elif choice == "4":
             print("\n📊 ÉTAPES INDIVIDUELLES")
             print("-" * 40)
             step_choice = input("Choisir (a/b/c): ").strip().lower()
-            
+
             if step_choice == "a":
-                run_command([sys.executable, "1_prepare_data.py"],
-                           "Préparation des données")
+                run_command(
+                    [sys.executable, "1_prepare_data.py"], "Préparation des données"
+                )
             elif step_choice == "b":
-                run_command([sys.executable, "2_train_models.py"],
-                           "Entraînement des modèles")
+                run_command(
+                    [sys.executable, "2_train_models.py"], "Entraînement des modèles"
+                )
             elif step_choice == "c":
-                run_command([sys.executable, "3_predict.py"],
-                           "Génération des prédictions")
+                run_command(
+                    [sys.executable, "3_predict.py"], "Génération des prédictions"
+                )
             else:
                 print("❌ Choix invalide")
-        
+
         elif choice == "5":
             print("\n🧹 NETTOYAGE")
             print("-" * 40)
-            confirm = input("Supprimer tous les fichiers générés ? (o/N): ").strip().lower()
-            if confirm in ['o', 'oui', 'y', 'yes']:
-                run_command([sys.executable, "clean_outputs.py"],
-                           "Nettoyage des sorties")
+            confirm = (
+                input("Supprimer tous les fichiers générés ? (o/N): ").strip().lower()
+            )
+            if confirm in ["o", "oui", "y", "yes"]:
+                run_command(
+                    [sys.executable, "clean_outputs.py"], "Nettoyage des sorties"
+                )
             else:
                 print("🔙 Opération annulée")
-        
+
         elif choice == "6":
             print("\n👋 Au revoir!")
             break
-        
+
         else:
             print("❌ Choix invalide, veuillez recommencer")
-    
+
     return 0
 
 
