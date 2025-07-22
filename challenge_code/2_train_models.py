@@ -94,7 +94,9 @@ def train_and_save_models():
         "all_models": models,
         "evaluation_results": results,
         "features": features,
-        "imputer": dataset["metadata"]["imputer"],  # Récupérer l'imputer depuis les métadonnées
+        "imputer": dataset["metadata"][
+            "imputer"
+        ],  # Récupérer l'imputer depuis les métadonnées
         "training_metadata": {
             "training_date": pd.Timestamp.now().isoformat(),
             "n_training_samples": len(X_train),

@@ -26,7 +26,7 @@ def predict_and_submit():
 
     # 1. Vérification et chargement du modèle et de l'imputer
     print("\n 1. Chargement du modele entraine et de l'imputer...")
-    
+
     model_package_path = "models/model_package.pkl"
 
     if not os.path.exists(model_package_path):
@@ -62,18 +62,18 @@ def predict_and_submit():
 
     # 2. Chargement des données de test
     print("\n 2. Chargement des donnees de test...")
-    
+
     # Import des fonctions de chargement
     from src.data.load import load_clinical_data, load_molecular_data
-    
+
     try:
         # Charger directement les données de test
         clinical_test = load_clinical_data(train=False)
         molecular_test = load_molecular_data(train=False)
-        
+
         print(f"   Donnees cliniques de test : {clinical_test.shape}")
         print(f"   Donnees moleculaires de test : {molecular_test.shape}")
-        
+
     except Exception as e:
         print(f"ERREUR lors du chargement des donnees de test : {e}")
         print("   Verifiez que les fichiers de test existent dans datas/X_test/")
