@@ -1,19 +1,19 @@
 """
-Preprocessing medical intelligent pour la modelisation de survie en LMA
+Preprocessing médical intelligent pour la modélisation de survie en LMA
 
-Ce module gere le preprocessing complet des donnees de leucemie myeloide aigue
-avec une approche medicalement informee :
+Ce module gère le preprocessing complet des données de leucémie myéloïde aiguë
+avec une approche médicalement informée :
 
-1. Nettoyage et validation des donnees
-2. Imputation intelligente basee sur le contexte medical
+1. Nettoyage et validation des données
+2. Imputation intelligente basée sur le contexte médical
 3. Feature engineering cliniquement pertinent
-4. Preparation pour les modeles de survie
+4. Préparation pour les modèles de survie
 
 Principes directeurs:
-- Preserver l'information temporelle (survie)
-- Utiliser des methodes d'imputation adaptees au domaine medical
-- Maintenir l'interpretabilite clinique
-- Robustesse aux donnees manquantes
+- Préserver l'information temporelle (survie)
+- Utiliser des méthodes d'imputation adaptées au domaine médical
+- Maintenir l'interprétabilité clinique
+- Robustesse aux données manquantes
 """
 
 import pandas as pd
@@ -673,81 +673,3 @@ def prepare_features_and_target(df_enriched, target_df, test_size=0.2):
     y_test = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
 
     return X_train, X_test, y_train, y_test, feature_cols
-
-
-def prepare_test_dataset(df_test_enriched, features, center_columns_train=None):
-    """
-    Prepare test dataset by aligning features with training data
-
-    Parameters:
-    -----------
-    df_test_enriched : pd.DataFrame
-        Enriched test dataframe
-    features : list
-        List of feature names from the trained model
-    center_columns_train : list, optional
-        Center columns from training data for alignment
-
-    Returns:
-    --------
-    pd.DataFrame : Test data aligned with training features
-    """
-    print("=== PREPARATION DES DONNEES DE TEST ===")
-
-    # Start with a copy of the enriched test data
-    X_test = df_test_enriched.copy()
-
-    # Remove metadata columns that shouldn't be features
-    exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
-    for col in exclude_cols:
-        if col in X_test.columns:
-            X_test = X_test.drop(columns=[col])
-
-    # Ensure we have all required features, add missing ones with zeros
-    missing_features = []
-    for feature in features:
-        if feature not in X_test.columns:
-            X_test[feature] = 0.0
-            missing_features.append(feature)
-
-    if missing_features:
-        print(f"   Features manquantes ajoutees (remplies avec 0) : {len(missing_features)}")
-        print(f"   Exemples : {missing_features[:5]}{'...' if len(missing_features) > 5 else ''}")
-
-    # Handle center columns alignment if provided
-    if center_columns_train:
-        # Get test center columns
-        center_columns_test = [col for col in X_test.columns if col.startswith("center_")]
-
-        # Add missing center columns from training
-        for center_col in center_columns_train:
-            if center_col not in X_test.columns:
-                X_test[center_col] = 0.0
-
-        # Remove extra center columns not in training
-        for center_col in center_columns_test:
-            if center_col not in center_columns_train:
-                X_test = X_test.drop(columns=[center_col])
-
-        print(f"   Colonnes center alignees : {len(center_columns_train)}")
-
-    # Select only the features used in training, in the same order
-    try:
-        X_test_final = X_test[features]
-    except KeyError as e:
-        print(f"ERREUR : Features manquantes apres alignement : {e}")
-        # Find which features are still missing
-        missing = [f for f in features if f not in X_test.columns]
-        print(f"Features encore manquantes : {missing}")
-        raise
-
-    # Final check for NaN values
-    nan_count = X_test_final.isnull().sum().sum()
-    if nan_count > 0:
-        print(f"   ATTENTION : {nan_count} valeurs NaN detectees, remplacement par 0")
-        X_test_final = X_test_final.fillna(0)
-
-    print(f"   Dataset de test prepare : {X_test_final.shape}")
-    print(f"   Features alignees : {len(features)}")
-
-    return X_test_final
