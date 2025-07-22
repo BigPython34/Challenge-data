@@ -26,7 +26,7 @@ def predict_and_submit():
 
     # 1. Vérification et chargement du modèle
     print("\n🤖 1. Chargement du modèle entraîné...")
-    model_package_path = "trained_models/model_package.pkl"
+    model_package_path = "models/model_package.pkl"
 
     if not os.path.exists(model_package_path):
         print("❌ ERREUR : Modèle entraîné introuvable !")

@@ -85,7 +85,7 @@ def train_and_save_models():
     print("\n💾 4. Sauvegarde du package modèle...")
 
     # Créer le répertoire de modèles
-    os.makedirs("trained_models", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
 
     # Package modèle complet
     model_package = {
@@ -105,19 +105,19 @@ def train_and_save_models():
     }
 
     # Sauvegarder le package complet
-    package_path = "trained_models/model_package.pkl"
+    package_path = "models/model_package.pkl"
     with open(package_path, "wb") as f:
         pickle.dump(model_package, f)
 
     print(f"   ✅ Package modèle sauvegardé : {package_path}")
 
     # Sauvegarder aussi le meilleur modèle seul (pour utilisation rapide)
-    best_model_path = "trained_models/best_model.joblib"
+    best_model_path = "models/best_model.joblib"
     joblib.dump(models[best_model_name], best_model_path)
     print(f"   ✅ Meilleur modèle sauvegardé : {best_model_path}")
 
     # Sauvegarder les métadonnées lisibles
-    metadata_path = "trained_models/model_info.txt"
+    metadata_path = "models/model_info.txt"
     with open(metadata_path, "w") as f:
         f.write("=== INFORMATIONS DU MODÈLE ENTRAÎNÉ ===\n")
         f.write(

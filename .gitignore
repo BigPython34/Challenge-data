@@ -21,16 +21,13 @@ __pycache__/
 
 # Dossiers de modèles - PARTOUT dans le projet
 **/models/
-**/trained_models/
 **/checkpoints/
 **/weights/
 challenge_code/models/
-challenge_code/trained_models/
 
 # Fichiers de modèles spécifiques problématiques
 challenge_code/models/*.pkl
-challenge_code/trained_models/*.pkl
-challenge_code/trained_models/*.joblib
+challenge_code/models/*.joblib
 
 # GROS FICHIERS DE DONNÉES
 # Ignorer les datasets volumineux

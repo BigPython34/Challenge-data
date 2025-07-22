@@ -7,7 +7,6 @@ import os
 import sys
 import subprocess
 import time
-from pathlib import Path
 
 
 def run_script(script_name, step_number, total_steps):
@@ -20,10 +19,10 @@ def run_script(script_name, step_number, total_steps):
     
     try:
         # Exécuter le script
-        result = subprocess.run([sys.executable, script_name], 
-                              capture_output=False, 
-                              check=True,
-                              cwd=os.getcwd())
+        subprocess.run([sys.executable, script_name], 
+                      capture_output=False, 
+                      check=True,
+                      cwd=os.getcwd())
         
         end_time = time.time()
         duration = end_time - start_time
@@ -39,8 +38,8 @@ def run_script(script_name, step_number, total_steps):
     except FileNotFoundError:
         print(f"\n❌ ERREUR : Script {script_name} introuvable")
         return False
-    except Exception as e:
-        print(f"\n❌ ERREUR inattendue dans {script_name} : {e}")
+    except OSError as e:
+        print(f"\n❌ ERREUR système dans {script_name} : {e}")
         return False
 
 
@@ -103,7 +102,7 @@ def main():
     print(f"⏱️  Durée totale : {total_duration:.2f} secondes ({total_duration/60:.1f} minutes)")
     print("\n📁 Fichiers générés :")
     print("   • datasets/training_dataset.pkl      → Dataset préparé")
-    print("   • trained_models/model_package.pkl   → Modèles entraînés")
+    print("   • models/model_package.pkl   → Modèles entraînés")
     print("   • submissions/latest_submission.csv  → Prédictions finales")
     print("\n✨ Votre modèle est prêt pour la soumission ! ✨")
     print("=" * 70)
@@ -149,7 +148,7 @@ def run_from_step(step_number):
     end_time = time.time()
     duration = end_time - start_time
     
-    print(f"\n🎉 EXÉCUTION TERMINÉE AVEC SUCCÈS !")
+    print("\n🎉 EXÉCUTION TERMINÉE AVEC SUCCÈS !")
     print(f"⏱️  Durée : {duration:.2f} secondes")
     return True
 

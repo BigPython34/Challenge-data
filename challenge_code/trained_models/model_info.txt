@@ -1,8 +1,0 @@
-=== INFORMATIONS DU MODÈLE ENTRAÎNÉ ===
-Date d'entraînement : 2025-07-22T09:55:14.121199
-Meilleur modèle : gradient_boosting
-Précision : N/A
-Échantillons d'entraînement : 2538
-Nombre de features : 61
-
-Performances de tous les modèles :
