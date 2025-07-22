@@ -1,29 +1,29 @@
 === RÉSUMÉ FINAL DES PRÉDICTIONS ===
-Date de génération : 2025-07-22T13:55:30.985327
-Modèle utilisé : gradient_boosting
+Date de génération : 2025-07-22T18:20:06.231138
+Modèle utilisé : coxnet
 Nombre de prédictions : 1193
-Fichier de soumission : submission_gradient_boosting_20250722_135530.csv
+Fichier de soumission : submission_coxnet_20250722_182006.csv
 
 Statistiques des prédictions :
 count    1193.000000
-mean        0.459915
-std         1.000885
-min        -1.783920
-25%        -0.302460
-50%         0.416914
-75%         1.192404
-max         3.356598
+mean        0.654545
+std         1.201133
+min        -2.369584
+25%        -0.246673
+50%         0.449327
+75%         1.404161
+max         9.251458
 Name: risk_score, dtype: float64
 
 Aperçu des données :
       ID  risk_score
-0   KYW1    1.516612
-1   KYW2    2.176719
-2   KYW3   -0.063238
-3   KYW4    1.095350
-4   KYW5    0.960562
-5   KYW6    0.879595
-6   KYW7    0.256574
-7   KYW8    0.482221
-8   KYW9   -0.185627
-9  KYW10   -0.222477
+0   KYW1    2.623546
+1   KYW2    0.564685
+2   KYW3   -0.436987
+3   KYW4    2.869835
+4   KYW5    0.400181
+5   KYW6    1.311156
+6   KYW7    1.253521
+7   KYW8    0.390025
+8   KYW9    1.629843
+9  KYW10   -0.404340

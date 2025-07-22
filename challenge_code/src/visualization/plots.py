@@ -3,7 +3,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
-import shap
+
+try:
+    import shap
+
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
 
 
 def plot_feature_importances(
@@ -30,8 +36,8 @@ def plot_feature_importances(
 
 
 def plot_correlation_matrix(df, figsize=(12, 8)):
-    """Affiche la matrice de corrélation"""
-    # Sélectionner seulement les colonnes numériques
+    """Affiche la matrice de correlation"""
+    # Selectionner seulement les colonnes numeriques
     numeric_df = df.select_dtypes(include=[np.number])
     corr_matrix = numeric_df.corr()
 
@@ -50,15 +56,19 @@ def plot_correlation_matrix(df, figsize=(12, 8)):
 
 
 def plot_shap_analysis(model, X_train, X_test, max_samples=100):
-    """Analyse SHAP pour l'explainabilité du modèle"""
-    # Créer un background dataset
+    """Analyse SHAP pour l'explainabilite du modele"""
+    if not SHAP_AVAILABLE:
+        print("SHAP non disponible, analyse ignoree")
+        return None
+
+    # Creer un background dataset
     background = X_train.sample(min(max_samples, len(X_train)))
 
-    # Définir une fonction de prédiction
+    # Definir une fonction de prediction
     def predict_fn(x):
         return model.predict(x)
 
-    # Créer l'explainer et calculer les valeurs SHAP
+    # Creer l'explainer et calculer les valeurs SHAP
     explainer = shap.KernelExplainer(predict_fn, background)
     shap_values = explainer.shap_values(X_test.iloc[:max_samples])
 
@@ -72,13 +82,13 @@ def plot_shap_analysis(model, X_train, X_test, max_samples=100):
 
 
 def plot_model_comparison(results, metric="test_cindex"):
-    """Compare les performances des modèles"""
+    """Compare les performances des modeles"""
     models = list(results.keys())
     scores = [results[model][metric] for model in models]
 
     plt.figure(figsize=(10, 6))
     bars = plt.bar(models, scores, color=["skyblue", "lightcoral", "lightgreen"])
-    plt.title(f"Comparaison des modèles - {metric}")
+    plt.title(f"Comparaison des modeles - {metric}")
     plt.ylabel(metric)
     plt.xticks(rotation=45)
 
@@ -98,15 +108,13 @@ def plot_model_comparison(results, metric="test_cindex"):
 
 
 def plot_predictions_distribution(submissions):
-    """Affiche la distribution des prédictions pour chaque modèle"""
+    """Affiche la distribution des predictions pour chaque modele"""
     fig, axes = plt.subplots(1, len(submissions), figsize=(15, 5))
-
     if len(submissions) == 1:
         axes = [axes]
 
     for idx, (name, info) in enumerate(submissions.items()):
         submission_df = info["submission_df"]
-
         axes[idx].hist(submission_df["risk_score"], bins=30, alpha=0.7, color=f"C{idx}")
         axes[idx].set_title(f"Distribution - {name}")
         axes[idx].set_xlabel("Risk Score")
@@ -117,13 +125,13 @@ def plot_predictions_distribution(submissions):
 
 
 def create_visualization_report(models, results, X_train, feature_names=None):
-    """Crée un rapport complet de visualisations"""
-    print("=== GÉNÉRATION DU RAPPORT DE VISUALISATION ===")
+    """Cree un rapport complet de visualisations"""
+    print("=== GENERATION DU RAPPORT DE VISUALISATION ===")
 
-    # 1. Comparaison des modèles
+    # 1. Comparaison des modeles
     plot_model_comparison(results)
 
-    # 2. Feature importances pour chaque modèle
+    # 2. Feature importances pour chaque modele
     if feature_names is None:
         feature_names = X_train.columns
 
@@ -138,7 +146,7 @@ def create_visualization_report(models, results, X_train, feature_names=None):
                     title=f"Feature Importances - {name}",
                 )
         except (NotImplementedError, AttributeError):
-            print(f"Feature importances non disponibles pour le modèle {name}")
+            print(f"Feature importances non disponibles pour le modele {name}")
             continue
 
-    print("Rapport de visualisation terminé!")
+    print("Rapport de visualisation termine!")

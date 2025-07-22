@@ -1,8 +1,9 @@
-=== RÉSUMÉ DU DATASET PRÉPARÉ ===
-Date de création : 2025-07-22T13:52:40.292737
-Échantillons d'entraînement : 2538
-Échantillons de validation : 635
-Nombre de features : 61
+=== RESUME DU DATASET D'ENTRAINEMENT ===
+
+Date de creation : 2025-07-22 17:56:40
+Echantillons d'entrainement : 2496
+Echantillons de validation : 624
+Nombre de features : 76
 
 Features disponibles :
   1. BM_BLAST
@@ -11,58 +12,73 @@ Features disponibles :
   4. MONOCYTES
   5. HB
   6. PLT
-  7. has_TP53_mutation
-  8. has_ASXL1_mutation
-  9. has_RUNX1_mutation
- 10. has_FLT3_mutation
- 11. has_NPM1_mutation
- 12. has_IDH1_mutation
- 13. has_IDH2_mutation
- 14. has_DNMT3A_mutation
- 15. has_TET2_mutation
- 16. has_CEBPA_mutation
- 17. has_SRSF2_mutation
- 18. has_SF3B1_mutation
- 19. Nmut
- 20. vaf_mean
- 21. vaf_max
- 22. vaf_std
- 23. frameshift_variant
- 24. normal_karyotype
- 25. complex_karyotype
- 26. monosomy_7
- 27. del_5q
- 28. inv_3
- 29. abn_17p
- 30. trisomy_8
- 31. t_9_11
- 32. inv_16
- 33. t_8_21
- 34. ANC_to_WBC_ratio
- 35. MONO_to_WBC_ratio
- 36. MONO_to_LYM_ratio
- 37. cytopenia_score
- 38. pancytopenia
- 39. center_CCH
- 40. center_CGM
- 41. center_DUS
- 42. center_DUTH
- 43. center_FLO
- 44. center_FUCE
- 45. center_GESMD
- 46. center_HIAE
- 47. center_HMS
- 48. center_ICO
- 49. center_IHBT
- 50. center_KI
- 51. center_MSK
- 52. center_MUV
- 53. center_PV
- 54. center_REL
- 55. center_RMCN
- 56. center_ROM
- 57. center_TUD
- 58. center_UMG
- 59. center_UOB
- 60. center_UOXF
- 61. center_VU
+  7. neutrophil_ratio
+  8. monocyte_ratio
+  9. platelet_wbc_ratio
+ 10. anemia_moderate
+ 11. anemia_severe
+ 12. thrombocytopenia_moderate
+ 13. thrombocytopenia_severe
+ 14. neutropenia_moderate
+ 15. neutropenia_severe
+ 16. leukocytosis_high
+ 17. leukocytosis_very_high
+ 18. high_blast_count
+ 19. intermediate_blast_count
+ 20. cytopenia_score
+ 21. pancytopenia
+ 22. proliferation_score
+ 23. log_WBC
+ 24. log_PLT
+ 25. mut_NPM1
+ 26. mut_CEBPA
+ 27. mut_TP53
+ 28. mut_FLT3
+ 29. mut_ASXL1
+ 30. mut_RUNX1
+ 31. mut_MECOM
+ 32. mut_DNMT3A
+ 33. mut_TET2
+ 34. mut_IDH1
+ 35. mut_IDH2
+ 36. mut_SF3B1
+ 37. mut_SRSF2
+ 38. mut_U2AF1
+ 39. mut_NRAS
+ 40. mut_KRAS
+ 41. mut_PTPN11
+ 42. vaf_max_TP53
+ 43. vaf_max_FLT3
+ 44. vaf_max_NPM1
+ 45. vaf_max_CEBPA
+ 46. TP53_truncating
+ 47. FLT3_high_VAF
+ 48. NPM1_pos_FLT3_neg
+ 49. DNMT3A_NPM1_comut
+ 50. methylation_pathway_altered
+ 51. splicing_pathway_altered
+ 52. ras_pathway_altered
+ 53. eln_molecular_risk
+ 54. total_mutations
+ 55. vaf_mean
+ 56. vaf_median
+ 57. vaf_max
+ 58. vaf_std
+ 59. high_vaf_mutations
+ 60. high_vaf_ratio
+ 61. t_8_21
+ 62. inv_16
+ 63. t_15_17
+ 64. normal_karyotype
+ 65. trisomy_8
+ 66. complex_karyotype
+ 67. monosomy_7
+ 68. del_5q
+ 69. abn_3q
+ 70. abn_17p
+ 71. t_6_9
+ 72. eln_cyto_risk
+ 73. num_cyto_abnormalities
+ 74. eln_integrated_risk
+ 75. mutation_burden_category
+ 76. clinical_risk_score

@@ -9,18 +9,18 @@ from ..config import SEED, TAU, IMPORTANT_GENES
 
 
 def set_seed(seed=None):
-    """Définit le seed pour la reproductibilité"""
+    """Definit le seed pour la reproductibilite"""
     if seed is None:
         seed = SEED
     np.random.seed(seed)
     random.seed(seed)
-    print(f"Seed défini à: {seed}")
+    print(f"Seed defini a: {seed}")
 
 
 def optimize_gradient_boosting_hyperparameters(
     X_train, y_train, X_test, y_test, n_trials=20
 ):
-    """Optimise les hyperparamètres du Gradient Boosting avec Optuna"""
+    """Optimise les hyperparametres du Gradient Boosting avec Optuna"""
 
     def objective(trial):
         params = {
@@ -32,11 +32,11 @@ def optimize_gradient_boosting_hyperparameters(
             "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         }
 
-        # Entraînement du modèle
+        # Entrainement du modele
         model = GradientBoostingSurvivalAnalysis(random_state=SEED, **params)
         model.fit(X_train, y_train)
 
-        # Évaluation
+        # Evaluation
         xgb_cindex_train = concordance_index_ipcw(
             y_train, y_train, model.predict(X_train), tau=TAU
         )[0]
@@ -54,32 +54,32 @@ def optimize_gradient_boosting_hyperparameters(
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
 
-    print(f"Meilleurs hyperparamètres: {study.best_params}")
+    print(f"Meilleurs hyperparametres: {study.best_params}")
     print(f"Meilleur score: {study.best_value:.5f}")
 
     return study.best_params, study.best_value
 
 
 def print_dataset_info(data_dict):
-    """Affiche des informations sur les datasets chargés"""
+    """Affiche des informations sur les datasets charges"""
     print("=== INFORMATIONS SUR LES DATASETS ===")
     for name, df in data_dict.items():
         print(f"{name}: {df.shape[0]} lignes, {df.shape[1]} colonnes")
 
-    print(f"\nGènes importants: {len(IMPORTANT_GENES)} gènes")
+    print(f"\nGenes importants: {len(IMPORTANT_GENES)} genes")
     print("=" * 50)
 
 
 def create_submission_summary(submissions):
-    """Crée un résumé des soumissions générées"""
-    print("\n=== RÉSUMÉ DES SOUMISSIONS ===")
+    """Cree un resume des soumissions generees"""
+    print("\n=== RESUME DES SOUMISSIONS ===")
     for name, info in submissions.items():
         filepath = info["filepath"]
         submission_df = info["submission_df"]
 
-        print(f"\nModèle: {name}")
+        print(f"\nModele: {name}")
         print(f"Fichier: {filepath}")
-        print(f"Nombre de prédictions: {len(submission_df)}")
+        print(f"Nombre de predictions: {len(submission_df)}")
         print(f"Score min: {submission_df['risk_score'].min():.5f}")
         print(f"Score max: {submission_df['risk_score'].max():.5f}")
         print(f"Score moyen: {submission_df['risk_score'].mean():.5f}")

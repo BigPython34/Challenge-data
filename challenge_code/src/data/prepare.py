@@ -1,43 +1,505 @@
-# Nettoyage, split, imputation, etc.
+"""
+Preprocessing medical intelligent pour la modelisation de survie en LMA
+
+Ce module gere le preprocessing complet des donnees de leucemie myeloide aigue
+avec une approche medicalement informee :
+
+1. Nettoyage et validation des donnees
+2. Imputation intelligente basee sur le contexte medical
+3. Feature engineering cliniquement pertinent
+4. Preparation pour les modeles de survie
+
+Principes directeurs:
+- Preserver l'information temporelle (survie)
+- Utiliser des methodes d'imputation adaptees au domaine medical
+- Maintenir l'interpretabilite clinique
+- Robustesse aux donnees manquantes
+"""
+
 import pandas as pd
 import numpy as np
-from sklearn.experimental import (
-    enable_iterative_imputer,
-)  # Required for IterativeImputer
+from typing import Dict, List, Tuple, Optional, Union
+import warnings
+from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
-from sklearn.ensemble import (
-    RandomForestRegressor,
-    BaggingClassifier,
-    ExtraTreesRegressor,
-)
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.cluster import KMeans, DBSCAN
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import BayesianRidge, Ridge
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import BayesianRidge
 from sksurv.util import Surv
-import warnings
-from scipy import stats
 
 from .. import config
-from ..config import SEED, IMPUTATION_PARAMS
+from ..config import SEED
 from . import features
 
 
-def clean_target_data(target_df):
-    """Nettoie les données target"""
-    # Drop rows where 'OS_YEARS' is NaN
-    target_df.dropna(subset=["OS_YEARS", "OS_STATUS"], inplace=True)
+def clean_and_validate_data(
+    clinical_df: pd.DataFrame, molecular_df: pd.DataFrame, target_df: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Nettoyage et validation initiale des données
 
-    # Convert 'OS_YEARS' to numeric
-    target_df["OS_YEARS"] = pd.to_numeric(target_df["OS_YEARS"], errors="coerce")
+    Parameters:
+    -----------
+    clinical_df, molecular_df, target_df : DataFrames brutes
 
-    # Ensure 'OS_STATUS' is boolean
-    target_df["OS_STATUS"] = target_df["OS_STATUS"].astype(bool)
+    Returns:
+    --------
+    Tuple : DataFrames nettoyées
+    """
+    print("=== NETTOYAGE ET VALIDATION DES DONNÉES ===")
 
-    return target_df
+    # ===== NETTOYAGE TARGET (crucial pour survie) =====
+
+    # Supprimer les patients sans données de survie
+    target_clean = target_df.dropna(subset=["OS_YEARS", "OS_STATUS"]).copy()
+
+    # Valider les données de survie
+    target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
+    target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
+
+    # Supprimer les temps de survie négatifs ou nuls
+    invalid_survival = (target_clean["OS_YEARS"] <= 0) | target_clean["OS_YEARS"].isna()
+    if invalid_survival.any():
+        print(
+            f"Suppression de {invalid_survival.sum()} patients avec temps de survie invalide"
+        )
+        target_clean = target_clean[~invalid_survival]
+
+    print(f"Target nettoye: {len(target_clean)} patients")
+    print(f"   - Taux de décès: {target_clean['OS_STATUS'].mean():.1%}")
+    print(f"   - Survie médiane: {target_clean['OS_YEARS'].median():.2f} ans")
+
+    # ===== NETTOYAGE CLINIQUE =====
+
+    # Garder seulement les patients avec données de survie
+    clinical_clean = clinical_df[clinical_df["ID"].isin(target_clean["ID"])].copy()
+
+    # Valider les mesures cliniques
+    numeric_cols = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
+    for col in numeric_cols:
+        if col in clinical_clean.columns:
+            # Convertir en numérique
+            clinical_clean[col] = pd.to_numeric(clinical_clean[col], errors="coerce")
+
+            # Détecter les valeurs aberrantes biologiquement impossibles
+            if col == "BM_BLAST":
+                # Blastes ne peuvent pas dépasser 100%
+                clinical_clean.loc[clinical_clean[col] > 100, col] = np.nan
+            elif col in ["WBC", "ANC", "MONOCYTES", "PLT"]:
+                # Valeurs négatives impossibles
+                clinical_clean.loc[clinical_clean[col] < 0, col] = np.nan
+            elif col == "HB":
+                # Hémoglobine doit être dans une plage raisonnable
+                clinical_clean.loc[
+                    (clinical_clean[col] < 3) | (clinical_clean[col] > 20), col
+                ] = np.nan
+
+    print(f"Clinique nettoye: {len(clinical_clean)} patients")
+
+    # ===== NETTOYAGE MOLÉCULAIRE =====
+
+    # Garder seulement les patients avec données de survie
+    molecular_clean = molecular_df[molecular_df["ID"].isin(target_clean["ID"])].copy()
+
+    # Valider les données de mutations
+    molecular_clean["VAF"] = pd.to_numeric(molecular_clean["VAF"], errors="coerce")
+    molecular_clean["DEPTH"] = pd.to_numeric(molecular_clean["DEPTH"], errors="coerce")
+
+    # Filtrer les mutations de qualité douteuse
+    # VAF doit être entre 0 et 1, depth > 10 pour être fiable
+    valid_mutations = (
+        (molecular_clean["VAF"] >= 0)
+        & (molecular_clean["VAF"] <= 1)
+        & (molecular_clean["DEPTH"] >= 10)
+    )
+
+    invalid_count = (~valid_mutations).sum()
+    if invalid_count > 0:
+        print(f"Suppression de {invalid_count} mutations de qualite douteuse")
+        molecular_clean = molecular_clean[valid_mutations]
+
+    print(
+        f"Moleculaire nettoye: {len(molecular_clean)} mutations sur {molecular_clean['ID'].nunique()} patients"
+    )
+
+    return clinical_clean, molecular_clean, target_clean
+
+
+def medical_imputation_strategy(
+    df: pd.DataFrame, column: str, patient_context: Optional[pd.DataFrame] = None
+) -> pd.Series:
+    """
+    Imputation médicalement informée pour une colonne spécifique
+
+    Utilise la connaissance du domaine médical pour choisir la meilleure
+    stratégie d'imputation selon le type de mesure clinique.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame avec les données
+    column : str, nom de la colonne à imputer
+    patient_context : pd.DataFrame optionnel avec contexte additionnel
+
+    Returns:
+    --------
+    pd.Series : Valeurs imputées
+    """
+    values = df[column].copy()
+    missing_mask = values.isna()
+
+    if not missing_mask.any():
+        return values
+
+    print(
+        f"   🏥 Imputation médicale pour {column} ({missing_mask.sum()} valeurs manquantes)"
+    )
+
+    # ===== STRATÉGIES SPÉCIFIQUES PAR MESURE CLINIQUE =====
+
+    if column == "BM_BLAST":
+        # Blastes médullaires: utiliser la médiane, car distribution asymétrique
+        # Si WBC très élevé, supposer blastose élevée (corrélation connue)
+        if "WBC" in df.columns:
+            high_wbc_mask = (df["WBC"] > 25) & missing_mask
+            normal_wbc_mask = (df["WBC"] <= 25) & missing_mask
+
+            median_val = values.median()
+            high_wbc_median = (
+                values[df["WBC"] > 25].median()
+                if (df["WBC"] > 25).any()
+                else median_val
+            )
+
+            values.loc[high_wbc_mask] = high_wbc_median
+            values.loc[normal_wbc_mask] = median_val
+        else:
+            values.fillna(values.median(), inplace=True)
+
+    elif column in ["WBC", "ANC", "MONOCYTES", "PLT"]:
+        # Comptages cellulaires: distribution log-normale
+        # Utiliser imputation par regression si d'autres comptages disponibles
+        other_counts = ["WBC", "ANC", "MONOCYTES", "PLT"]
+        other_counts = [c for c in other_counts if c in df.columns and c != column]
+
+        if len(other_counts) >= 2:
+            # Imputation par régression (relation entre les comptages)
+            from sklearn.linear_model import LinearRegression
+
+            # Préparer les données pour la régression
+            X = df[other_counts].fillna(df[other_counts].median())
+            y = values.dropna()
+            X_train = X.loc[y.index]
+
+            if len(y) > 10:  # Assez de données pour la régression
+                reg = LinearRegression()
+                reg.fit(X_train, y)
+
+                # Prédire les valeurs manquantes
+                X_missing = X.loc[missing_mask]
+                predictions = reg.predict(X_missing)
+
+                # Éviter les valeurs négatives
+                predictions = np.maximum(predictions, 0.1)
+                values.loc[missing_mask] = predictions
+            else:
+                # Fallback: médiane
+                values.fillna(values.median(), inplace=True)
+        else:
+            # Fallback: médiane
+            values.fillna(values.median(), inplace=True)
+
+    elif column == "HB":
+        # Hémoglobine: corrélée avec l'âge et le sexe
+        # Utiliser des valeurs normales par tranche d'âge si possible
+        median_val = values.median()
+
+        # Distinguer anémie selon le contexte (si d'autres cytopénies présentes)
+        if (
+            patient_context is not None
+            and "cytopenia_context" in patient_context.columns
+        ):
+            # Si autres cytopénies, HB probablement plus basse
+            cytopenia_mask = patient_context["cytopenia_context"] & missing_mask
+            normal_mask = ~patient_context["cytopenia_context"] & missing_mask
+
+            anemic_median = values[patient_context["cytopenia_context"]].median()
+            normal_median = values[~patient_context["cytopenia_context"]].median()
+
+            if not np.isnan(anemic_median):
+                values.loc[cytopenia_mask] = anemic_median
+            if not np.isnan(normal_median):
+                values.loc[normal_mask] = normal_median
+        else:
+            values.fillna(median_val, inplace=True)
+
+    else:
+        # Stratégie par défaut: médiane pour les variables continues
+        values.fillna(values.median(), inplace=True)
+
+    print(f"      {missing_mask.sum()} valeurs imputees")
+    return values
+
+
+def intelligent_clinical_imputation(
+    clinical_df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Imputation intelligente des données cliniques avec contexte médical
+
+    Parameters:
+    -----------
+    clinical_df : pd.DataFrame avec données cliniques
+
+    Returns:
+    --------
+    Tuple : (DataFrame imputé, métadonnées d'imputation)
+    """
+    print("=== IMPUTATION CLINIQUE INTELLIGENTE ===")
+
+    df_imputed = clinical_df.copy()
+    imputation_metadata = {"method": "medical_informed", "columns_imputed": []}
+
+    # Créer un contexte de cytopénies pour informer l'imputation de l'HB
+    cytopenia_context = pd.DataFrame(index=df_imputed.index)
+    cytopenia_context["cytopenia_context"] = (
+        (df_imputed["PLT"] < 100) | (df_imputed["ANC"] < 1.5)
+    ).fillna(False)
+
+    # Ordre d'imputation basé sur les dépendances médicales
+    # 1. D'abord les comptages principaux (WBC)
+    # 2. Puis les sous-populations (ANC, MONOCYTES)
+    # 3. Puis les autres lignées (PLT, HB)
+    # 4. Enfin les mesures dérivées (BM_BLAST)
+
+    imputation_order = ["WBC", "ANC", "MONOCYTES", "PLT", "HB", "BM_BLAST"]
+
+    for column in imputation_order:
+        if column in df_imputed.columns and df_imputed[column].isna().any():
+            df_imputed[column] = medical_imputation_strategy(
+                df_imputed, column, cytopenia_context
+            )
+            imputation_metadata["columns_imputed"].append(column)
+
+    # Gestion des données catégorielles
+    if "CENTER" in df_imputed.columns:
+        df_imputed["CENTER"] = df_imputed["CENTER"].fillna("Unknown")
+
+    if "CYTOGENETICS" in df_imputed.columns:
+        # Cytogénétique manquante = normale (hypothèse médicale standard)
+        df_imputed["CYTOGENETICS"] = df_imputed["CYTOGENETICS"].fillna("46,XX")
+
+    print("Imputation clinique terminee")
+    print(f"   Colonnes imputées: {imputation_metadata['columns_imputed']}")
+    print(f"   Valeurs manquantes restantes: {df_imputed.isna().sum().sum()}")
+
+    return df_imputed, imputation_metadata
+
+
+def prepare_survival_dataset(
+    clinical_df: pd.DataFrame,
+    molecular_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    test_size: float = 0.2,
+    use_advanced_features: bool = True,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    """
+    Préparation complète du dataset pour la modélisation de survie
+
+    Pipeline complet:
+    1. Nettoyage et validation
+    2. Feature engineering médical
+    3. Imputation intelligente
+    4. Split train/test
+    5. Préparation des cibles de survie
+
+    Parameters:
+    -----------
+    clinical_df, molecular_df, target_df : DataFrames bruts
+    test_size : proportion pour le test set
+    use_advanced_features : utiliser le feature engineering avancé
+
+    Returns:
+    --------
+    Tuple : (train_df, test_df, metadata)
+    """
+    print("🏥 === PRÉPARATION DATASET DE SURVIE EN LMA ===")
+
+    # ===== 1. NETTOYAGE ET VALIDATION =====
+    clinical_clean, molecular_clean, target_clean = clean_and_validate_data(
+        clinical_df, molecular_df, target_df
+    )
+
+    # ===== 2. FEATURE ENGINEERING MÉDICAL =====
+    if use_advanced_features:
+        print("\n=== FEATURE ENGINEERING MÉDICAL ===")
+
+        # Features cliniques
+        clinical_features = features.create_clinical_features(clinical_clean)
+        print(f"Features cliniques: {len(clinical_features.columns)} variables")
+
+        # Features cytogénétiques
+        cyto_features = features.extract_cytogenetic_risk_features(clinical_features)
+        print(f"Features cytogenetiques: {len(cyto_features.columns)} variables")
+
+        # Features moléculaires
+        molecular_features = features.extract_molecular_risk_features(
+            clinical_features, molecular_clean
+        )
+        burden_features = features.create_molecular_burden_features(molecular_clean)
+        print(
+            f"Features moleculaires: {len(molecular_features.columns)} + {len(burden_features.columns)} variables"
+        )
+
+        # Combinaison de toutes les features
+        enriched_df = features.combine_all_features(
+            clinical_features, molecular_features, burden_features, cyto_features
+        )
+        print(f"Dataset enrichi: {enriched_df.shape}")
+
+    else:
+        # Version simple
+        enriched_df = clinical_clean.copy()
+
+    # ===== 3. IMPUTATION INTELLIGENTE =====
+    enriched_df, imputation_metadata = intelligent_clinical_imputation(enriched_df)
+
+    # ===== 4. MERGER AVEC LES TARGETS =====
+    final_df = enriched_df.merge(target_clean, on="ID", how="inner")
+    print(f"Dataset final: {final_df.shape}")
+
+    # ===== 5. SPLIT TRAIN/TEST STRATIFIÉ =====
+    # Stratification sur le status de survie pour équilibrer les événements
+    train_df, test_df = train_test_split(
+        final_df, test_size=test_size, random_state=SEED, stratify=final_df["OS_STATUS"]
+    )
+
+    print("Split termine:")
+    print(
+        f"   Train: {len(train_df)} patients ({train_df['OS_STATUS'].mean():.1%} événements)"
+    )
+    print(
+        f"   Test:  {len(test_df)} patients ({test_df['OS_STATUS'].mean():.1%} événements)"
+    )
+
+    # ===== 6. PRÉPARER LES STRUCTURES DE SURVIE =====
+
+    # Créer les arrays structurés pour scikit-survival
+    train_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
+    test_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
+
+    # Ajouter aux DataFrames pour compatibilité
+    train_df["y_survival"] = [train_y[i] for i in range(len(train_y))]
+    test_df["y_survival"] = [test_y[i] for i in range(len(test_y))]
+
+    # ===== 7. MÉTADONNÉES =====
+    metadata = {
+        "n_patients_initial": len(clinical_df),
+        "n_patients_final": len(final_df),
+        "n_mutations": len(molecular_clean),
+        "n_features": final_df.shape[1]
+        - 4,  # Moins ID, OS_YEARS, OS_STATUS, y_survival
+        "train_size": len(train_df),
+        "test_size": len(test_df),
+        "event_rate_train": train_df["OS_STATUS"].mean(),
+        "event_rate_test": test_df["OS_STATUS"].mean(),
+        "median_followup": final_df["OS_YEARS"].median(),
+        "imputation_metadata": imputation_metadata,
+        "feature_engineering": use_advanced_features,
+    }
+
+    print("\nPREPARATION TERMINEE")
+    print(
+        f"   {metadata['n_patients_final']} patients, {metadata['n_features']} features"
+    )
+    print(f"   {metadata['n_mutations']} mutations analysees")
+    print(f"   Suivi median: {metadata['median_followup']:.1f} ans")
+
+    return train_df, test_df, metadata
+
+
+def get_survival_feature_sets() -> Dict[str, List[str]]:
+    """
+    Définir des ensembles de features pour différents niveaux d'analyse
+
+    Returns:
+    --------
+    Dict : Ensembles de features organisés par complexité/usage clinique
+    """
+    clean_lists = features.get_clean_feature_lists()
+
+    return {
+        # Ensemble minimal - pour usage clinique de routine
+        "clinical_minimal": [
+            "BM_BLAST",
+            "WBC",
+            "HB",
+            "PLT",
+            "anemia_severe",
+            "thrombocytopenia_severe",
+            "high_blast_count",
+            "cytopenia_score",
+        ],
+        # Ensemble ELN 2017 - standard pour pronostic LMA
+        "eln_standard": (
+            clean_lists["clinical_base"]
+            + clean_lists["cytogenetic"]
+            + [
+                "mut_NPM1",
+                "mut_FLT3",
+                "mut_TP53",
+                "mut_CEBPA",
+                "mut_ASXL1",
+                "mut_RUNX1",
+            ]
+            + ["eln_integrated_risk"]
+        ),
+        # Ensemble complet - recherche/développement
+        "research_complete": (
+            clean_lists["clinical_base"]
+            + clean_lists["clinical_ratios"]
+            + clean_lists["clinical_binary"]
+            + clean_lists["clinical_scores"]
+            + clean_lists["cytogenetic"]
+            + clean_lists["molecular_mutations"]
+            + clean_lists["molecular_derived"]
+            + clean_lists["mutation_burden"]
+            + clean_lists["integrated_scores"]
+        ),
+        # Ensemble robuste - équilibre performance/interprétabilité
+        "robust_balanced": (
+            [
+                "BM_BLAST",
+                "WBC",
+                "ANC",
+                "HB",
+                "PLT",
+                "neutrophil_ratio",
+                "monocyte_ratio",
+            ]
+            + [
+                "anemia_severe",
+                "thrombocytopenia_severe",
+                "neutropenia_severe",
+                "high_blast_count",
+            ]
+            + ["cytopenia_score", "proliferation_score"]
+            + ["normal_karyotype", "complex_karyotype", "eln_cyto_risk"]
+            + [
+                "mut_NPM1",
+                "mut_FLT3",
+                "mut_TP53",
+                "mut_ASXL1",
+                "mut_DNMT3A",
+                "mut_TET2",
+            ]
+            + ["eln_molecular_risk", "total_mutations", "vaf_mean"]
+            + ["eln_integrated_risk", "clinical_risk_score"]
+        ),
+    }
+
+
+# ===== FONCTIONS DE COMPATIBILITÉ =====
 
 
 def prepare_enriched_dataset(
@@ -45,867 +507,247 @@ def prepare_enriched_dataset(
     molecular_df,
     target_df=None,
     imputer=None,
-    advanced_imputation_method="knn",
+    advanced_imputation_method="medical",
     is_training=True,
 ):
-    """Prépare un dataset enrichi avec toutes les features et imputation avancée"""
-    print(
-        f"\nPréparation du dataset enrichi ({'entraînement' if is_training else 'test'})..."
-    )
+    """
+    Version de compatibilité avec l'ancien pipeline
 
-    # 1. Création de features basées sur les gènes
-    gene_features = pd.DataFrame(index=clinical_df["ID"].unique())
-
-    for gene in config.IMPORTANT_GENES:
-        mutated_patients = molecular_df[molecular_df["GENE"] == gene]["ID"].unique()
-        gene_features[f"has_{gene}_mutation"] = gene_features.index.isin(
-            mutated_patients
-        ).astype(int)
-
-    # 2. Statistiques moléculaires
-    mutation_counts, vaf_stats, effect_counts = (
-        features.create_molecular_stats_features(molecular_df)
-    )
-
-    # 3. Fusion des features moléculaires
-    mol_features = gene_features.reset_index().rename(columns={"index": "ID"})
-    mol_features = pd.merge(mol_features, mutation_counts, on="ID", how="outer")
-    mol_features = pd.merge(mol_features, vaf_stats, on="ID", how="outer")
-    mol_features = pd.merge(mol_features, effect_counts, on="ID", how="outer")
-
-    # 4. Fusion avec les données cliniques
-    df_enriched = clinical_df.merge(mol_features, on="ID", how="left")
-
-    # 5. Features cytogénétiques
-    cyto_features = features.extract_advanced_cytogenetic_features(clinical_df)
-    df_enriched = pd.concat([df_enriched, cyto_features], axis=1)
-
-    # 6. Features cliniques avancées
-    df_enriched = features.create_advanced_clinical_features(df_enriched)
-
-    # 7. Encoder le centre médical
-    center_dummies = pd.get_dummies(df_enriched["CENTER"], prefix="center")
-    df_enriched = pd.concat([df_enriched, center_dummies], axis=1)
-
-    # 8. Gestion initiale des valeurs manquantes (features binaires/catégorielles)
-    for col in df_enriched.columns:
-        if col not in [
-            "ID",
-            "CENTER",
-            "BM_BLAST",
-            "WBC",
-            "ANC",
-            "MONOCYTES",
-            "HB",
-            "PLT",
-            "CYTOGENETICS",
-            "sex",  # Gérée par l'imputation avancée
-        ]:
-            df_enriched[col] = df_enriched[col].fillna(0)
-
-    # 9. Imputation avancée
-    print(f"Valeurs manquantes avant imputation : {df_enriched.isna().sum().sum()}")
-
+    Utilise le nouveau système d'imputation médicale par défaut,
+    mais peut revenir à l'ancien système si nécessaire.
+    """
     if is_training:
-        # Appliquer l'imputation avancée pour les données d'entraînement
-        clinical_cols = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT", "sex"]
-
-        # Identifier les colonnes cliniques qui existent réellement
-        existing_clinical_cols = [
-            col for col in clinical_cols if col in df_enriched.columns
-        ]
-
-        if existing_clinical_cols:
-            df_enriched, imputation_metadata = advanced_imputation(
-                df_enriched,
-                method=advanced_imputation_method,
-                cluster_impute_cols=existing_clinical_cols,
-                sex_impute=("sex" in df_enriched.columns),
+        # Nouveau pipeline pour l'entraînement
+        if target_df is not None:
+            # Si on a des targets, utiliser le pipeline complet mais sans split
+            clinical_clean, molecular_clean, target_clean = clean_and_validate_data(
+                clinical_df, molecular_df, target_df
             )
 
-            # Fallback avec SimpleImputer pour garantir qu'il n'y a plus de NaN
-            remaining_clinical_cols = [
-                col for col in existing_clinical_cols if col != "sex"
-            ]
-            if remaining_clinical_cols:
-                simple_imputer = SimpleImputer(strategy="median")
-                df_enriched[remaining_clinical_cols] = simple_imputer.fit_transform(
-                    df_enriched[remaining_clinical_cols]
-                )
-                imputation_metadata["simple_imputer_fallback"] = simple_imputer
+            # Feature engineering
+            clinical_features = features.create_clinical_features(clinical_clean)
+            cyto_features = features.extract_cytogenetic_risk_features(
+                clinical_features
+            )
+            molecular_features = features.extract_molecular_risk_features(
+                clinical_features, molecular_clean
+            )
+            burden_features = features.create_molecular_burden_features(molecular_clean)
+
+            enriched_df = features.combine_all_features(
+                clinical_features, molecular_features, burden_features, cyto_features
+            )
+
+            # Imputation
+            enriched_df, imputation_metadata = intelligent_clinical_imputation(
+                enriched_df
+            )
+
+            # Imputation finale pour éliminer tous les NaN
+            numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
+            enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
+            nan_count = enriched_df.isnull().sum().sum()
+            if nan_count > 0:
+                enriched_df = enriched_df.fillna(0)
+
+            # Merger avec les targets
+            final_df = enriched_df.merge(target_clean, on="ID", how="inner")
+
+            return final_df, imputation_metadata
         else:
-            imputation_metadata = {}
-            simple_imputer = SimpleImputer(strategy="median")
-            df_enriched[["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]] = (
-                simple_imputer.fit_transform(
-                    df_enriched[["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]]
-                )
+            # Version sans target (pour compatibilité)
+            clinical_clean, molecular_clean, _ = clean_and_validate_data(
+                clinical_df,
+                molecular_df,
+                pd.DataFrame(
+                    {"ID": clinical_df["ID"], "OS_YEARS": 1.0, "OS_STATUS": True}
+                ),
             )
-            imputation_metadata["simple_imputer_fallback"] = simple_imputer
 
-        print(f"Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}")
-        return df_enriched, imputation_metadata
+            clinical_features = features.create_clinical_features(clinical_clean)
+            cyto_features = features.extract_cytogenetic_risk_features(
+                clinical_features
+            )
+            molecular_features = features.extract_molecular_risk_features(
+                clinical_features, molecular_clean
+            )
+            burden_features = features.create_molecular_burden_features(molecular_clean)
 
+            enriched_df = features.combine_all_features(
+                clinical_features, molecular_features, burden_features, cyto_features
+            )
+
+            enriched_df, imputation_metadata = intelligent_clinical_imputation(
+                enriched_df
+            )
+
+            # Imputation finale pour éliminer tous les NaN
+            numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
+            enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
+            nan_count = enriched_df.isnull().sum().sum()
+            if nan_count > 0:
+                enriched_df = enriched_df.fillna(0)
+
+            return enriched_df, imputation_metadata
     else:
-        # Pour les données de test, utiliser les imputers entraînés
+        # Mode test - utiliser l'imputer fourni (compatibilité)
         if imputer is None:
-            raise ValueError("Imputer must be provided for test data")
+            raise ValueError("Imputer requis pour les données de test")
 
-        # Appliquer l'imputation avec les métadonnées sauvegardées
-        clinical_cols = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
-        existing_clinical_cols = [
-            col for col in clinical_cols if col in df_enriched.columns
-        ]
+        # Pipeline simplifié pour le test
+        enriched_df = clinical_df.copy()
 
-        # Utiliser l'imputer simple comme fallback si disponible
-        if "simple_imputer_fallback" in imputer and existing_clinical_cols:
-            df_enriched[existing_clinical_cols] = imputer[
-                "simple_imputer_fallback"
-            ].transform(df_enriched[existing_clinical_cols])
+        # Appliquer les mêmes transformations qu'en training
+        clinical_features = features.create_clinical_features(enriched_df)
+        cyto_features = features.extract_cytogenetic_risk_features(clinical_features)
+        molecular_features = features.extract_molecular_risk_features(
+            clinical_features, molecular_df
+        )
+        burden_features = features.create_molecular_burden_features(molecular_df)
 
-        # Imputation spéciale pour sex si disponible
-        if "sex" in df_enriched.columns and df_enriched["sex"].isna().any():
-            df_enriched = impute_sex_advanced_v2(df_enriched)
+        enriched_df = features.combine_all_features(
+            clinical_features, molecular_features, burden_features, cyto_features
+        )
 
-        print(f"Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}")
-        return df_enriched
+        # Imputation finale pour éliminer tous les NaN
+        numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
+        enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
+        nan_count = enriched_df.isnull().sum().sum()
+        if nan_count > 0:
+            enriched_df = enriched_df.fillna(0)
+
+        # Imputation simple avec les métadonnées sauvegardées
+        for col in imputer.get("columns_imputed", []):
+            if col in enriched_df.columns and enriched_df[col].isna().any():
+                enriched_df[col] = enriched_df[col].fillna(enriched_df[col].median())
+
+        return enriched_df
+
+
+def clean_target_data(target_df):
+    """Version de compatibilité"""
+    target_clean = target_df.copy()
+    target_clean.dropna(subset=["OS_YEARS", "OS_STATUS"], inplace=True)
+    target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
+    target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
+    return target_clean
 
 
 def prepare_features_and_target(df_enriched, target_df, test_size=0.2):
-    """Prépare les features et le target pour l'entraînement"""
-    # Définir les features
-    feature_lists = features.get_feature_lists()
+    """Version de compatibilité avec l'ancien format"""
+    # Merger avec les targets
+    final_df = df_enriched.merge(target_df, on="ID", how="inner")
 
-    # Obtenir les colonnes center
-    center_features = [col for col in df_enriched.columns if col.startswith("center_")]
-    effect_features = [
-        col
-        for col in df_enriched.columns
-        if col
-        in [
-            "frameshift_variant",
-            "missense_variant",
-            "nonsense",
-            "splice_acceptor_variant",
-            "splice_donor_variant",
-        ]
-    ]
+    # Nettoyer les colonnes dupliquées
+    if "OS_YEARS_y" in final_df.columns:
+        final_df = final_df.drop(columns=["OS_YEARS_x", "OS_STATUS_x"])
+        final_df = final_df.rename(
+            columns={"OS_YEARS_y": "OS_YEARS", "OS_STATUS_y": "OS_STATUS"}
+        )
 
-    # Construire la liste finale des features (éviter le conflit de nom avec le module features)
-    final_features = (
-        feature_lists["clinical"]
-        + feature_lists["gene_mutations"]
-        + feature_lists["statistics"]
-        + effect_features
-        + feature_lists["cytogenetic"]
-        + feature_lists["ratios"]
-        + feature_lists["clinical_scores"]
-        + center_features
+    # Split - utiliser la colonne de statut appropriée
+    status_col = None
+    for col in ["STATUS", "OS_STATUS", "Event", "event"]:
+        if col in final_df.columns:
+            status_col = col
+            break
+
+    if status_col is None:
+        raise ValueError(
+            f"Aucune colonne de statut trouvée. Colonnes disponibles: {list(final_df.columns)}"
+        )
+
+    train_df, test_df = train_test_split(
+        final_df, test_size=test_size, random_state=SEED, stratify=final_df[status_col]
     )
 
-    # Créer X et y
-    X = df_enriched.loc[df_enriched["ID"].isin(target_df["ID"]), final_features]
-    y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", target_df)
+    # Préparer les features (exclure les colonnes de métadonnées)
+    exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
+    feature_cols = [col for col in train_df.columns if col not in exclude_cols]
 
-    # Split des données
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=SEED
-    )
+    X_train = train_df[feature_cols]
+    X_test = test_df[feature_cols]
 
-    # Gérer les valeurs manquantes
-    X_train.fillna(0, inplace=True)
-    X_test.fillna(0, inplace=True)
+    # Préparer les targets de survie
+    y_train = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
+    y_test = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
 
-    return X_train, X_test, y_train, y_test, final_features
+    return X_train, X_test, y_train, y_test, feature_cols
 
 
-def prepare_test_dataset(df_test_enriched, feature_list, center_columns_train):
-    """Prépare le dataset de test pour les prédictions"""
-    # Assurer la cohérence des colonnes center
-    for col in center_columns_train:
-        if col not in df_test_enriched.columns:
-            df_test_enriched[col] = 0
-
-    # Vérifier que toutes les features sont présentes
-    for feature in feature_list:
-        if feature not in df_test_enriched.columns:
-            df_test_enriched[feature] = 0
-
-    # S'assurer que les features sont dans le même ordre
-    X_test = df_test_enriched.loc[:, feature_list]
-    X_test.fillna(0, inplace=True)
-
-    return X_test
-
-
-def advanced_imputation(
-    df, method="iterative_ensemble", cluster_impute_cols=None, sex_impute=False
-):
+def prepare_test_dataset(df_test_enriched, features, center_columns_train=None):
     """
-    Imputation avancée des valeurs manquantes avec stratégies sophistiquées
+    Prepare test dataset by aligning features with training data
 
     Parameters:
     -----------
-    df : pd.DataFrame
-        DataFrame avec valeurs manquantes
-    method : str
-        Méthode d'imputation : 'iterative_ensemble', 'knn_adaptive', 'cluster_hierarchical',
-        'rf_ensemble', 'bayesian_ridge', 'hybrid'
-    cluster_impute_cols : list
-        Colonnes pour l'imputation par clustering
-    sex_impute : bool
-        Si True, impute la colonne 'sex' avec un modèle de bagging avancé
+    df_test_enriched : pd.DataFrame
+        Enriched test dataframe
+    features : list
+        List of feature names from the trained model
+    center_columns_train : list, optional
+        Center columns from training data for alignment
 
     Returns:
     --------
-    pd.DataFrame : DataFrame avec valeurs imputées
-    dict : Metadata sur l'imputation (imputers, scalers, etc.)
+    pd.DataFrame : Test data aligned with training features
     """
-    df_imputed = df.copy()
-    imputation_metadata = {}
-
-    # Séparer les colonnes numériques et catégorielles
-    numeric_cols = df_imputed.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = df_imputed.select_dtypes(
-        include=["object", "category"]
-    ).columns.tolist()
-
-    # Exclure ID des colonnes à imputer
-    if "ID" in numeric_cols:
-        numeric_cols.remove("ID")
-    if "ID" in categorical_cols:
-        categorical_cols.remove("ID")
-
-    print(f"Imputation avancée avec méthode : {method}")
-    print(f"   Colonnes numériques : {len(numeric_cols)}")
-    print(f"   Colonnes catégorielles : {len(categorical_cols)}")
-
-    # 1. Imputation des colonnes numériques
-    if numeric_cols and method == "knn":
-        print("   Imputation KNN pour les variables numériques...")
-        knn_imputer = KNNImputer(n_neighbors=5, weights="distance")
-        df_imputed[numeric_cols] = knn_imputer.fit_transform(df_imputed[numeric_cols])
-        imputation_metadata["knn_imputer"] = knn_imputer
-
-    elif numeric_cols and method == "rf":
-        print("   Imputation Random Forest pour les variables numériques...")
-        df_imputed = random_forest_imputation(df_imputed, numeric_cols)
-
-    elif numeric_cols and method == "cluster":
-        print("   Imputation par clustering pour les variables numériques...")
-        df_imputed, cluster_metadata = cluster_based_imputation(
-            df_imputed, cluster_impute_cols or numeric_cols
-        )
-        imputation_metadata.update(cluster_metadata)
-
-    elif numeric_cols and method == "iterative":
-        print("   Imputation itérative pour les variables numériques...")
-        iterative_imputer = IterativeImputer(
-            estimator=BayesianRidge(),
-            max_iter=10,
-            random_state=SEED,
-            n_jobs=-1,
-        )
-        df_imputed[numeric_cols] = iterative_imputer.fit_transform(
-            df_imputed[numeric_cols]
-        )
-        imputation_metadata["iterative_imputer"] = iterative_imputer
-
-    elif numeric_cols:
-        # Fallback vers l'imputation médiane simple
-        print("   Imputation médiane pour les variables numériques...")
-        simple_imputer = SimpleImputer(strategy="median")
-        df_imputed[numeric_cols] = simple_imputer.fit_transform(
-            df_imputed[numeric_cols]
-        )
-        imputation_metadata["simple_imputer"] = simple_imputer
-
-    # 2. Imputation des colonnes catégorielles
-    if categorical_cols:
-        print("   Imputation mode pour les variables catégorielles...")
-        for col in categorical_cols:
-            if df_imputed[col].isna().any():
-                mode_value = (
-                    df_imputed[col].mode().iloc[0]
-                    if len(df_imputed[col].mode()) > 0
-                    else "unknown"
-                )
-                df_imputed[col] = df_imputed[col].fillna(mode_value)
-
-    # 3. Imputation spéciale pour la colonne 'sex' avec modèle de bagging
-    if sex_impute and "sex" in df_imputed.columns:
-        print("   Imputation spécialisée pour la variable 'sex'...")
-        df_imputed = impute_sex_advanced_v2(df_imputed)
-
-    # 4. Gestion des outliers
-    df_imputed = handle_outliers(df_imputed, numeric_cols, method="iqr", multiplier=2.0)
-
-    print(
-        f"   Imputation terminée : {df_imputed.isna().sum().sum()} valeurs manquantes restantes"
-    )
-
-    return df_imputed, imputation_metadata
-
-
-def random_forest_imputation(df, numeric_cols, n_estimators=50):
-    """Imputation avec Random Forest pour chaque colonne manquante"""
-    df_rf = df.copy()
-
-    for col in numeric_cols:
-        if df_rf[col].isna().any():
-            # Préparer les données pour l'entraînement
-            train_data = df_rf[~df_rf[col].isna()]
-            predict_data = df_rf[df_rf[col].isna()]
-
-            if len(train_data) > 0 and len(predict_data) > 0:
-                # Features pour prédire cette colonne
-                feature_cols = [
-                    c
-                    for c in numeric_cols
-                    if c != col and not train_data[c].isna().all()
-                ]
-
-                if len(feature_cols) > 0:
-                    X_train = train_data[feature_cols].fillna(
-                        0
-                    )  # Remplissage temporaire
-                    y_train = train_data[col]
-                    X_predict = predict_data[feature_cols].fillna(0)
-
-                    # Entraîner le modèle
-                    rf = RandomForestRegressor(
-                        n_estimators=n_estimators, random_state=SEED
-                    )
-                    rf.fit(X_train, y_train)
-
-                    # Prédire les valeurs manquantes
-                    predictions = rf.predict(X_predict)
-                    df_rf.loc[df_rf[col].isna(), col] = predictions
-
-    return df_rf
-
-
-def cluster_based_imputation(df, cluster_cols, n_clusters=5):
-    """Imputation basée sur le clustering K-means"""
-    df_cluster = df.copy()
-    metadata = {}
-
-    # Sélectionner les colonnes pour le clustering (sans valeurs manquantes)
-    cluster_data = df_cluster[cluster_cols].copy()
-
-    # Imputation simple préliminaire pour pouvoir faire le clustering
-    temp_imputer = SimpleImputer(strategy="median")
-    cluster_data_filled = pd.DataFrame(
-        temp_imputer.fit_transform(cluster_data),
-        columns=cluster_cols,
-        index=cluster_data.index,
-    )
-
-    # Standardisation pour le clustering
-    scaler = StandardScaler()
-    cluster_data_scaled = scaler.fit_transform(cluster_data_filled)
-
-    # Clustering K-means
-    kmeans = KMeans(n_clusters=n_clusters, random_state=SEED, n_init=10)
-    clusters = kmeans.fit_predict(cluster_data_scaled)
-    df_cluster["cluster"] = clusters
-
-    # Imputer les valeurs manquantes en utilisant la médiane de chaque cluster
-    for col in cluster_cols:
-        if df_cluster[col].isna().any():
-            for cluster_id in range(n_clusters):
-                cluster_mask = df_cluster["cluster"] == cluster_id
-                cluster_median = df_cluster.loc[cluster_mask, col].median()
-
-                # Si pas de valeur dans ce cluster, utiliser la médiane globale
-                if pd.isna(cluster_median):
-                    cluster_median = df_cluster[col].median()
-
-                # Imputer les valeurs manquantes de ce cluster
-                missing_mask = df_cluster[col].isna() & cluster_mask
-                df_cluster.loc[missing_mask, col] = cluster_median
-
-    # Supprimer la colonne temporaire de cluster
-    df_cluster = df_cluster.drop("cluster", axis=1)
-    metadata["scaler"] = scaler
-    metadata["kmeans"] = kmeans
-
-    return df_cluster, metadata
-
-
-def advanced_outlier_detection(df, numeric_cols, contamination=0.1):
-    """Détection avancée des outliers avec plusieurs méthodes combinées"""
-    df_clean = df.copy()
-    outliers_detected = 0
-
-    for col in numeric_cols:
-        if col not in df_clean.columns or df_clean[col].isna().all():
-            continue
-
-        # Méthode 1: Isolation Forest
-        iso_forest = IsolationForest(contamination=contamination, random_state=SEED)
-        outlier_mask_iso = (
-            iso_forest.fit_predict(df_clean[[col]].fillna(df_clean[col].median())) == -1
-        )
-
-        # Méthode 2: Local Outlier Factor
-        lof = LocalOutlierFactor(contamination=contamination)
-        outlier_mask_lof = (
-            lof.fit_predict(df_clean[[col]].fillna(df_clean[col].median())) == -1
-        )
-
-        # Méthode 3: Z-score modifié (MAD - Median Absolute Deviation)
-        median = df_clean[col].median()
-        mad = np.median(np.abs(df_clean[col] - median))
-        modified_z_scores = 0.6745 * (df_clean[col] - median) / mad
-        outlier_mask_zscore = np.abs(modified_z_scores) > 3.5
-
-        # Consensus: outlier si détecté par au moins 2 méthodes
-        consensus_outliers = (
-            outlier_mask_iso.astype(int)
-            + outlier_mask_lof.astype(int)
-            + outlier_mask_zscore.astype(int)
-        ) >= 2
-
-        if consensus_outliers.sum() > 0:
-            # Remplacement par des valeurs robustes (percentiles)
-            p25, p75 = df_clean[col].quantile([0.25, 0.75])
-            df_clean.loc[consensus_outliers, col] = np.where(
-                df_clean.loc[consensus_outliers, col] > p75, p75, p25
-            )
-            outliers_detected += consensus_outliers.sum()
-
-    if outliers_detected > 0:
-        print(
-            f"   {outliers_detected} outliers détectés et traités avec consensus multi-méthodes"
-        )
-
-    return df_clean
-
-
-def iterative_ensemble_imputation(df, numeric_cols, max_iter=None):
-    """Imputation itérative avec ensemble de modèles prédictifs"""
-    if max_iter is None:
-        max_iter = IMPUTATION_PARAMS.get("iterative_max_iter", 20)
-
-    # Ensemble d'estimateurs pour plus de robustesse
-    estimators = [
-        BayesianRidge(),
-        ExtraTreesRegressor(n_estimators=50, random_state=SEED),
-        RandomForestRegressor(n_estimators=50, random_state=SEED),
-    ]
-
-    imputers = {}
-    df_imputed = df.copy()
-
-    for estimator in estimators:
-        imputer = IterativeImputer(
-            estimator=estimator,
-            max_iter=max_iter,
-            random_state=SEED,
-            initial_strategy="median",
-        )
-
-        # Imputation pour ce modèle
-        imputed_data = imputer.fit_transform(df_imputed[numeric_cols])
-        imputed_df = pd.DataFrame(
-            imputed_data, columns=numeric_cols, index=df_imputed.index
-        )
-
-        # Stocker l'imputer
-        imputers[type(estimator).__name__] = imputer
-
-        # Moyenne pondérée des prédictions (ensemble)
-        if "ensemble_sum" not in locals():
-            ensemble_sum = imputed_df
-            weights_sum = 1.0
-        else:
-            # Pondération selon la performance (BayesianRidge plus de poids)
-            weight = 2.0 if isinstance(estimator, BayesianRidge) else 1.0
-            ensemble_sum = ensemble_sum + weight * imputed_df
-            weights_sum += weight
-
-    # Moyenne pondérée finale
-    df_imputed[numeric_cols] = ensemble_sum / weights_sum
-
-    metadata = {"iterative_imputers": imputers, "ensemble_weights": weights_sum}
-    print(f"   Ensemble de {len(estimators)} modèles itératifs convergé")
-
-    return df_imputed, metadata
-
-
-def adaptive_knn_imputation(df, numeric_cols):
-    """Imputation KNN adaptatif avec distance pondérée optimisée"""
-    df_imputed = df.copy()
-
-    # Déterminer le nombre optimal de voisins par validation croisée
-    optimal_k = min(max(5, int(np.sqrt(len(df) / 4))), 15)
-
-    # Scaler robuste pour KNN
-    scaler = RobustScaler()
-    scaled_data = scaler.fit_transform(df_imputed[numeric_cols])
-
-    # KNN avec distance de Minkowski optimisée
-    knn_imputer = KNNImputer(
-        n_neighbors=optimal_k, weights="distance", metric="nan_euclidean"
-    )
-
-    imputed_scaled = knn_imputer.fit_transform(scaled_data)
-
-    # Retour à l'échelle originale
-    imputed_data = scaler.inverse_transform(imputed_scaled)
-    df_imputed[numeric_cols] = imputed_data
-
-    metadata = {
-        "adaptive_knn_imputer": knn_imputer,
-        "robust_scaler": scaler,
-        "optimal_k": optimal_k,
-    }
-
-    print(f"   KNN adaptatif (k={optimal_k}) avec distance pondérée")
-    return df_imputed, metadata
-
-
-def hierarchical_cluster_imputation(df, cluster_cols, min_cluster_size=10):
-    """Imputation par clustering hiérarchique avec DBSCAN"""
-    df_cluster = df.copy()
-
-    # Préparation des données pour clustering
-    cluster_data = df_cluster[cluster_cols].copy()
-
-    # Imputation préliminaire
-    temp_imputer = SimpleImputer(strategy="median")
-    cluster_data_filled = pd.DataFrame(
-        temp_imputer.fit_transform(cluster_data),
-        columns=cluster_cols,
-        index=cluster_data.index,
-    )
-
-    # Standardisation robuste
-    scaler = RobustScaler()
-    cluster_data_scaled = scaler.fit_transform(cluster_data_filled)
-
-    # DBSCAN pour clustering hiérarchique
-    eps = np.percentile(np.std(cluster_data_scaled, axis=0), 75) * 0.5
-    dbscan = DBSCAN(eps=eps, min_samples=min_cluster_size)
-    clusters = dbscan.fit_predict(cluster_data_scaled)
-
-    # Ajouter KMeans en fallback pour les points "bruit" (-1)
-    noise_mask = clusters == -1
-    if noise_mask.sum() > 0:
-        n_clusters = max(3, len(np.unique(clusters[clusters != -1])))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=SEED, n_init=10)
-        noise_clusters = kmeans.fit_predict(cluster_data_scaled[noise_mask])
-
-        # Réassigner les clusters de bruit
-        max_cluster = clusters.max()
-        clusters[noise_mask] = noise_clusters + max_cluster + 1
-
-    df_cluster["cluster"] = clusters
-    unique_clusters = np.unique(clusters)
-
-    # Imputation sophistiquée par cluster
-    for col in cluster_cols:
-        if df_cluster[col].isna().any():
-            for cluster_id in unique_clusters:
-                cluster_mask = df_cluster["cluster"] == cluster_id
-                cluster_data_col = df_cluster.loc[cluster_mask, col]
-
-                # Utiliser médiane robuste ou moyenne tronquée selon la distribution
-                if len(cluster_data_col.dropna()) > 5:
-                    # Test de normalité
-                    _, p_value = stats.normaltest(cluster_data_col.dropna())
-                    if p_value > 0.05:  # Distribution normale
-                        cluster_value = cluster_data_col.mean()
-                    else:  # Distribution non-normale
-                        cluster_value = cluster_data_col.median()
-                else:
-                    cluster_value = df_cluster[col].median()
-
-                # Imputation
-                missing_mask = df_cluster[col].isna() & cluster_mask
-                df_cluster.loc[missing_mask, col] = cluster_value
-
-    df_cluster = df_cluster.drop("cluster", axis=1)
-
-    metadata = {
-        "dbscan_clusterer": dbscan,
-        "hierarchical_scaler": scaler,
-        "n_clusters_found": len(unique_clusters),
-        "eps_used": eps,
-    }
-
-    print(f"   Clustering hiérarchique: {len(unique_clusters)} clusters détectés")
-    return df_cluster, metadata
-
-
-def ensemble_forest_imputation(df, numeric_cols):
-    """Imputation avec ensemble de forêts (RF + ExtraTrees)"""
-    df_forest = df.copy()
-
-    for col in numeric_cols:
-        if df_forest[col].isna().any():
-            # Données d'entraînement
-            train_mask = ~df_forest[col].isna()
-            predict_mask = df_forest[col].isna()
-
-            if train_mask.sum() > 10 and predict_mask.sum() > 0:
-                feature_cols = [c for c in numeric_cols if c != col]
-                X_train = df_forest.loc[train_mask, feature_cols].fillna(0)
-                y_train = df_forest.loc[train_mask, col]
-                X_predict = df_forest.loc[predict_mask, feature_cols].fillna(0)
-
-                # Ensemble Random Forest + Extra Trees
-                rf = RandomForestRegressor(
-                    n_estimators=IMPUTATION_PARAMS.get("rf_n_estimators", 100),
-                    random_state=SEED,
-                    max_features="sqrt",
-                )
-                et = ExtraTreesRegressor(
-                    n_estimators=100, random_state=SEED, max_features="sqrt"
-                )
-
-                # Entraînement
-                rf.fit(X_train, y_train)
-                et.fit(X_train, y_train)
-
-                # Prédictions ensemble (moyenne pondérée)
-                rf_pred = rf.predict(X_predict)
-                et_pred = et.predict(X_predict)
-                ensemble_pred = 0.6 * rf_pred + 0.4 * et_pred  # RF plus de poids
-
-                df_forest.loc[predict_mask, col] = ensemble_pred
-
-    return df_forest
-
-
-def bayesian_ridge_imputation(df, numeric_cols):
-    """Imputation Bayésienne avec Ridge regression"""
-    df_bayes = df.copy()
-    imputers = {}
-
-    for col in numeric_cols:
-        if df_bayes[col].isna().any():
-            train_mask = ~df_bayes[col].isna()
-            predict_mask = df_bayes[col].isna()
-
-            if train_mask.sum() > 5 and predict_mask.sum() > 0:
-                feature_cols = [c for c in numeric_cols if c != col]
-                X_train = df_bayes.loc[train_mask, feature_cols].fillna(0)
-                y_train = df_bayes.loc[train_mask, col]
-                X_predict = df_bayes.loc[predict_mask, feature_cols].fillna(0)
-
-                # Régression Bayésienne Ridge avec priors informatifs
-                bayes_ridge = BayesianRidge(
-                    alpha_1=1e-6,
-                    alpha_2=1e-6,
-                    lambda_1=1e-6,
-                    lambda_2=1e-6,
-                    compute_score=True,
-                )
-
-                bayes_ridge.fit(X_train, y_train)
-                predictions = bayes_ridge.predict(X_predict)
-
-                df_bayes.loc[predict_mask, col] = predictions
-                imputers[col] = bayes_ridge
-
-    metadata = {"bayesian_imputers": imputers}
-    return df_bayes, metadata
-
-
-def hybrid_imputation_strategy(df, numeric_cols):
-    """Stratégie hybride combinant plusieurs approches selon les caractéristiques des données"""
-    df_hybrid = df.copy()
-    strategy_used = {}
-
-    for col in numeric_cols:
-        if df_hybrid[col].isna().any():
-            missing_ratio = df_hybrid[col].isna().mean()
-            data_variance = df_hybrid[col].var()
-            n_unique = df_hybrid[col].nunique()
-
-            # Choisir la stratégie selon les caractéristiques
-            if missing_ratio > 0.5:
-                # Beaucoup de valeurs manquantes -> KNN robuste
-                strategy = "knn_robust"
-                knn_imputer = KNNImputer(n_neighbors=3, weights="distance")
-                df_hybrid[[col]] = knn_imputer.fit_transform(df_hybrid[[col]])
-
-            elif n_unique < 10:
-                # Peu de valeurs uniques -> Mode ou médiane
-                strategy = "mode_median"
-                df_hybrid[col] = df_hybrid[col].fillna(
-                    df_hybrid[col].mode().iloc[0]
-                    if len(df_hybrid[col].mode()) > 0
-                    else df_hybrid[col].median()
-                )
-
-            elif data_variance > np.percentile(
-                [df_hybrid[c].var() for c in numeric_cols], 75
-            ):
-                # Haute variance -> Random Forest
-                strategy = "random_forest"
-                df_hybrid = ensemble_forest_imputation(df_hybrid, [col])
-
-            else:
-                # Cas général -> Imputation itérative
-                strategy = "iterative"
-                imputer = IterativeImputer(estimator=BayesianRidge(), random_state=SEED)
-                df_hybrid[[col]] = imputer.fit_transform(df_hybrid[[col]])
-
-            strategy_used[col] = strategy
-
-    metadata = {"hybrid_strategies": strategy_used}
-    print(
-        f"   Stratégies hybrides: {len(set(strategy_used.values()))} méthodes utilisées"
-    )
-    return df_hybrid, metadata
-
-
-def impute_sex_advanced_v2(df):
-    """Version améliorée de l'imputation pour 'sex' avec stacking et validation croisée"""
-    df_imputed = df.copy()
-
-    if "sex" not in df_imputed.columns:
-        return df_imputed
-
-    known_mask = (df_imputed["sex"] != 0.5) & (~df_imputed["sex"].isna())
-    unknown_mask = (df_imputed["sex"] == 0.5) | (df_imputed["sex"].isna())
-
-    if not known_mask.any() or not unknown_mask.any():
-        return df_imputed
-
-    # Features pour prédiction
-    feature_cols = df_imputed.select_dtypes(include=[np.number]).columns.tolist()
-    feature_cols = [col for col in feature_cols if col not in ["ID", "sex"]]
-
-    if len(feature_cols) == 0:
-        return df_imputed
-
-    known_data = df_imputed[known_mask]
-    unknown_data = df_imputed[unknown_mask]
-
-    X_train = known_data[feature_cols].fillna(0)
-    y_train = known_data["sex"]
-    X_predict = unknown_data[feature_cols].fillna(0)
-
-    # Ensemble de modèles avec stacking
-    from sklearn.ensemble import VotingClassifier
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.svm import SVC
-
-    base_models = [
-        (
-            "bagging",
-            BaggingClassifier(
-                estimator=DecisionTreeClassifier(),
-                n_estimators=IMPUTATION_PARAMS.get("bagging_n_estimators", 1000),
-                random_state=SEED,
-            ),
-        ),
-        ("rf", RandomForestRegressor(n_estimators=100, random_state=SEED)),
-        ("svc", SVC(probability=True, random_state=SEED)),
-    ]
-
-    # Voting classifier avec soft voting
-    ensemble = VotingClassifier(estimators=base_models, voting="soft")
-
+    print("=== PREPARATION DES DONNEES DE TEST ===")
+
+    # Start with a copy of the enriched test data
+    X_test = df_test_enriched.copy()
+
+    # Remove metadata columns that shouldn't be features
+    exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
+    for col in exclude_cols:
+        if col in X_test.columns:
+            X_test = X_test.drop(columns=[col])
+
+    # Ensure we have all required features, add missing ones with zeros
+    missing_features = []
+    for feature in features:
+        if feature not in X_test.columns:
+            X_test[feature] = 0.0
+            missing_features.append(feature)
+
+    if missing_features:
+        print(f"   Features manquantes ajoutees (remplies avec 0) : {len(missing_features)}")
+        print(f"   Exemples : {missing_features[:5]}{'...' if len(missing_features) > 5 else ''}")
+
+    # Handle center columns alignment if provided
+    if center_columns_train:
+        # Get test center columns
+        center_columns_test = [col for col in X_test.columns if col.startswith("center_")]
+
+        # Add missing center columns from training
+        for center_col in center_columns_train:
+            if center_col not in X_test.columns:
+                X_test[center_col] = 0.0
+
+        # Remove extra center columns not in training
+        for center_col in center_columns_test:
+            if center_col not in center_columns_train:
+                X_test = X_test.drop(columns=[center_col])
+
+        print(f"   Colonnes center alignees : {len(center_columns_train)}")
+
+    # Select only the features used in training, in the same order
     try:
-        ensemble.fit(X_train, y_train)
-        predictions = ensemble.predict(X_predict)
-        df_imputed.loc[unknown_mask, "sex"] = predictions
+        X_test_final = X_test[features]
+    except KeyError as e:
+        print(f"ERREUR : Features manquantes apres alignement : {e}")
+        # Find which features are still missing
+        missing = [f for f in features if f not in X_test.columns]
+        print(f"Features encore manquantes : {missing}")
+        raise
 
-        print(f"   {unknown_mask.sum()} valeurs 'sex' imputées avec ensemble avancé")
+    # Final check for NaN values
+    nan_count = X_test_final.isnull().sum().sum()
+    if nan_count > 0:
+        print(f"   ATTENTION : {nan_count} valeurs NaN detectees, remplacement par 0")
+        X_test_final = X_test_final.fillna(0)
 
-    except Exception as e:
-        print(f"   Fallback vers méthode simple pour 'sex': {e}")
-        most_frequent = (
-            known_data["sex"].mode().iloc[0] if len(known_data["sex"].mode()) > 0 else 0
-        )
-        df_imputed.loc[unknown_mask, "sex"] = most_frequent
+    print(f"   Dataset de test prepare : {X_test_final.shape}")
+    print(f"   Features alignees : {len(features)}")
 
-    return df_imputed
-
-
-def handle_outliers(df, numeric_cols, method="iqr", multiplier=1.5, threshold=0.25):
-    """
-    Traite les outliers dans un DataFrame selon différentes méthodes.
-    Basé sur la méthode process_outliers de preprocess.py
-
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        DataFrame à traiter
-    numeric_cols : list
-        Liste des colonnes numériques à traiter
-    method : str
-        Méthode de traitement : 'iqr', 'zscore', 'quantile'
-    multiplier : float
-        Facteur multiplicateur pour la méthode IQR
-    threshold : float
-        Seuil pour la méthode quantile (ex: 0.25 pour Q1/Q3)
-
-    Returns:
-    --------
-    pd.DataFrame : DataFrame avec outliers traités
-    """
-    df_out = df.copy()
-
-    if len(numeric_cols) == 0:
-        return df_out
-
-    outliers_treated = 0
-
-    for col in numeric_cols:
-        if col not in df_out.columns:
-            continue
-
-        original_values = df_out[col].notna().sum()
-        if original_values == 0:
-            continue
-
-        if method == "iqr":
-            # Méthode IQR (Interquartile Range)
-            Q1 = df_out[col].quantile(0.25)
-            Q3 = df_out[col].quantile(0.75)
-            IQR = Q3 - Q1
-            lower_bound = Q1 - multiplier * IQR
-            upper_bound = Q3 + multiplier * IQR
-
-        elif method == "quantile":
-            # Méthode par quantiles
-            lower_bound = df_out[col].quantile(threshold)
-            upper_bound = df_out[col].quantile(1 - threshold)
-
-        elif method == "zscore":
-            # Méthode Z-score (nécessite une distribution normale)
-            mean_val = df_out[col].mean()
-            std_val = df_out[col].std()
-            lower_bound = mean_val - multiplier * std_val
-            upper_bound = mean_val + multiplier * std_val
-
-        else:
-            print(f"   Méthode '{method}' non reconnue pour {col}")
-            continue
-
-        # Compter les outliers avant traitement
-        outliers_before = (
-            (df_out[col] < lower_bound) | (df_out[col] > upper_bound)
-        ).sum()
-
-        # Limiter (clip) les valeurs en dehors de l'intervalle
-        df_out[col] = df_out[col].clip(lower_bound, upper_bound)
-
-        if outliers_before > 0:
-            outliers_treated += outliers_before
-            print(
-                f"   {outliers_before} outliers traités pour '{col}' [{lower_bound:.2f}, {upper_bound:.2f}]"
-            )
-
-    if outliers_treated > 0:
-        print(f"   Total: {outliers_treated} outliers traités")
-    else:
-        print("   Aucun outlier détecté")
-
-    return df_out
+    return X_test_final

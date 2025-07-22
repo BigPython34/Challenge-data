@@ -1,15 +1,14 @@
-# Métriques, validation croisée, etc.
+# Metriques, validation croisee, etc.
 from sksurv.metrics import concordance_index_ipcw
-
 from ..config import TAU
 
 
 def evaluate_model_cindex(model, X_train, y_train, X_test, y_test, tau=None):
-    """Évalue un modèle avec le C-index IPCW"""
+    """Evalue un modele avec le C-index IPCW"""
     if tau is None:
         tau = TAU
 
-    # Prédictions
+    # Predictions
     train_pred = model.predict(X_train)
     test_pred = model.predict(X_test)
 
@@ -26,12 +25,12 @@ def evaluate_model_cindex(model, X_train, y_train, X_test, y_test, tau=None):
 
 
 def compare_models(models, X_train, y_train, X_test, y_test):
-    """Compare plusieurs modèles"""
+    """Compare plusieurs modeles"""
     results = {}
 
     for name, model_info in models.items():
         model = model_info["model"]
-        print(f"\nÉvaluation du modèle {name}...")
+        print(f"\nEvaluation du modele {name}...")
 
         eval_results = evaluate_model_cindex(model, X_train, y_train, X_test, y_test)
 
@@ -40,17 +39,17 @@ def compare_models(models, X_train, y_train, X_test, y_test):
 
         results[name] = eval_results
 
-    # Trouver le meilleur modèle
+    # Trouver le meilleur modele
     best_model = max(results.keys(), key=lambda k: results[k]["test_cindex"])
     print(
-        f"\nMeilleur modèle: {best_model} (C-Index Test: {results[best_model]['test_cindex']:.5f})"
+        f"\nMeilleur modele: {best_model} (C-Index Test: {results[best_model]['test_cindex']:.5f})"
     )
 
     return results, best_model
 
 
 def evaluate_single_model(model, X_train, y_train, X_test, y_test, model_name="Model"):
-    """Évalue un seul modèle"""
+    """Evalue un seul modele"""
     results = evaluate_model_cindex(model, X_train, y_train, X_test, y_test)
 
     print(f"{model_name} - C-Index IPCW Train: {results['train_cindex']:.5f}")

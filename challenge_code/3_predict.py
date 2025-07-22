@@ -7,7 +7,7 @@ import pickle
 import os
 import joblib
 import pandas as pd
-from src.data.prepare import prepare_enriched_dataset, prepare_test_dataset
+from src.data.prepare import prepare_enriched_dataset
 
 # Import pour PyCox DeepSurv si disponible
 try:
@@ -20,108 +20,130 @@ except ImportError:
 
 def predict_and_submit():
     """Applique le modèle entraîné aux données de test et génère les soumissions"""
-    print("=== SCRIPT 3/3 : PRÉDICTIONS FINALES ===")
-    print("Objectif : Générer les prédictions sur les données de test")
+    print("=== SCRIPT 3/3 : PREDICTIONS FINALES ===")
+    print("Objectif : Generer les predictions sur les donnees de test")
     print("=" * 60)
 
-    # 1. Vérification et chargement du modèle
-    print("\n🤖 1. Chargement du modèle entraîné...")
+    # 1. Vérification et chargement du modèle et de l'imputer
+    print("\n 1. Chargement du modele entraine et de l'imputer...")
+    
     model_package_path = "models/model_package.pkl"
 
     if not os.path.exists(model_package_path):
-        print("❌ ERREUR : Modèle entraîné introuvable !")
+        print("ERREUR : Modele entraine introuvable !")
         print(f"   Fichier attendu : {model_package_path}")
-        print("   ➡️  Veuillez d'abord exécuter : python 2_train_models.py")
+        print("   Veuillez d'abord executer : python 2_train_models.py")
         return None
 
     try:
+        # Charger le package modèle complet avec l'imputer
         with open(model_package_path, "rb") as f:
             model_package = pickle.load(f)
 
         best_model_dict = model_package["best_model"]
         best_model_name = model_package["best_model_name"]
         features = model_package["features"]
-        imputer = model_package["imputer"]
+        imputer = model_package["imputer"]  # Utiliser l'imputer du modèle
 
         # Extraire le modèle du dictionnaire
         best_model = best_model_dict["model"]
 
-        print("   ✅ Modèle chargé avec succès")
-        print(f"   🏆 Modèle : {best_model_name}")
-        print(f"   📊 Features : {len(features)}")
+        print("   Modele charge avec succes")
+        print(f"   Modele : {best_model_name}")
+        print(f"   Features : {len(features)}")
+        print("   Imputer d'entrainement charge")
 
     except FileNotFoundError:
-        print("❌ ERREUR : Fichier modèle introuvable")
+        print("ERREUR : Fichier modele introuvable")
         return None
     except Exception as e:
-        print(f"❌ ERREUR lors du chargement du modèle : {e}")
+        print(f"ERREUR lors du chargement du modele : {e}")
         return None
 
-    # 2. Chargement des données originales
-    print("\n📂 2. Chargement des données de test...")
-    dataset_path = "datasets/training_dataset.pkl"
-
-    if not os.path.exists(dataset_path):
-        print("❌ ERREUR : Dataset original introuvable !")
-        print("   ➡️  Veuillez d'abord exécuter : python 1_prepare_data.py")
-        return None
-
+    # 2. Chargement des données de test
+    print("\n 2. Chargement des donnees de test...")
+    
+    # Import des fonctions de chargement
+    from src.data.load import load_clinical_data, load_molecular_data
+    
     try:
-        with open(dataset_path, "rb") as f:
-            dataset = pickle.load(f)
-
-        raw_data = dataset["raw_data"]
-        print("   ✅ Données de test chargées")
-
+        # Charger directement les données de test
+        clinical_test = load_clinical_data(train=False)
+        molecular_test = load_molecular_data(train=False)
+        
+        print(f"   Donnees cliniques de test : {clinical_test.shape}")
+        print(f"   Donnees moleculaires de test : {molecular_test.shape}")
+        
     except Exception as e:
-        print(f"❌ ERREUR lors du chargement des données : {e}")
+        print(f"ERREUR lors du chargement des donnees de test : {e}")
+        print("   Verifiez que les fichiers de test existent dans datas/X_test/")
         return None
 
     # 3. Préparation des données de test
-    print("\n🔧 3. Préparation des données de test...")
+    print("\n 3. Preparation des donnees de test...")
 
     try:
-        # Préparer les données de test avec le même preprocessing et imputation avancée
+        # Préparer les données de test avec l'imputer exact utilisé pendant l'entraînement
         df_test_enriched = prepare_enriched_dataset(
-            raw_data["clinical_test"],
-            raw_data["molecular_test"],
+            clinical_test,
+            molecular_test,
             None,  # pas de target pour test
-            imputer=imputer,
-            advanced_imputation_method="iterative_ensemble",  # Même méthode que l'entraînement
+            imputer=imputer,  # Utiliser le vrai imputer d'entraînement
+            advanced_imputation_method="medical",
             is_training=False,
         )
 
         # Sauvegarde du dataset enrichi de test au format CSV
         enriched_test_csv = "datasets/enriched_test.csv"
         df_test_enriched.to_csv(enriched_test_csv, index=False)
-        print(f"   ✅ Dataset enrichi de test exporté : {enriched_test_csv}")
+        print(f"   Dataset enrichi de test exporte : {enriched_test_csv}")
 
-        # Obtenir les colonnes center depuis les données d'entraînement
-        df_enriched = dataset["df_enriched"]
-        center_columns_train = [
-            col for col in df_enriched.columns if col.startswith("center_")
+        # Préparer les features de test - utiliser la même logique que l'entraînement
+        # Exclure les colonnes de métadonnées
+        exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
+        available_features = [
+            col for col in df_test_enriched.columns if col not in exclude_cols
         ]
 
-        # Préparer les features de test
-        X_test_final = prepare_test_dataset(
-            df_test_enriched, features, center_columns_train
-        )
+        # Sélectionner seulement les features utilisées pendant l'entraînement
+        missing_features = []
+        for feature in features:
+            if feature not in df_test_enriched.columns:
+                # Ajouter les features manquantes avec des zéros
+                df_test_enriched[feature] = 0.0
+                missing_features.append(feature)
 
-        print(f"   ✅ Données de test préparées : {X_test_final.shape}")
-        print(f"   📊 {X_test_final.shape[0]} échantillons à prédire")
+        if missing_features:
+            print(
+                f"   Features manquantes ajoutées (remplies avec 0) : {len(missing_features)}"
+            )
+
+        # Sélectionner exactement les mêmes features que l'entraînement
+        X_test_final = df_test_enriched[features]
+
+        # Vérification finale des valeurs manquantes
+        nan_count = X_test_final.isnull().sum().sum()
+        if nan_count > 0:
+            print(
+                f"   ATTENTION : {nan_count} valeurs NaN détectées, remplacement par 0"
+            )
+            X_test_final = X_test_final.fillna(0)
+
+        print(f"   Donnees de test preparees : {X_test_final.shape}")
+        print(f"   {X_test_final.shape[0]} echantillons a predire")
 
     except Exception as e:
-        print(f"❌ ERREUR lors de la préparation des données de test : {e}")
+        print(f"ERREUR lors de la preparation des donnees de test : {e}")
         return None
 
     # 4. Génération des prédictions
-    print("\n🔮 4. Génération des prédictions...")
+    print("\n 4. Generation des predictions...")
 
     try:
         # Prédictions avec le meilleur modèle directement
         # Vérifier si c'est un modèle PyCox (wrapper spécial)
         if hasattr(best_model, "__class__") and "PyCoxWrapper" in str(type(best_model)):
-            print("   🧠 Modèle PyCox DeepSurv détecté - prédictions spécialisées")
+            print("   Modele PyCox DeepSurv detecte - predictions specialisees")
             predictions = best_model.predict(X_test_final)
         else:
             # Modèles scikit-survival standards
@@ -129,19 +151,19 @@ def predict_and_submit():
 
         # Créer le DataFrame de soumission
         submission_df = pd.DataFrame(
-            {"ID": raw_data["clinical_test"]["ID"], "risk_score": predictions}
+            {"ID": clinical_test["ID"], "risk_score": predictions}
         )
 
-        print(f"   ✅ Prédictions générées : {len(submission_df)} échantillons")
-        print(f"   📊 Type du modèle : {type(best_model).__name__}")
+        print(f"   Predictions generees : {len(submission_df)} echantillons")
+        print(f"   Type du modele : {type(best_model).__name__}")
 
     except Exception as e:
-        print(f"❌ ERREUR lors des prédictions : {e}")
-        print(f"   Type de modèle : {type(best_model)}")
+        print(f"ERREUR lors des predictions : {e}")
+        print(f"   Type de modele : {type(best_model)}")
         return None
 
     # 5. Sauvegarde des résultats
-    print("\n💾 5. Sauvegarde des prédictions...")
+    print("\n 5. Sauvegarde des predictions...")
 
     # Créer le répertoire de résultats
     os.makedirs("submissions", exist_ok=True)
@@ -153,12 +175,12 @@ def predict_and_submit():
         submission_path = f"submissions/{submission_filename}"
 
         submission_df.to_csv(submission_path, index=False)
-        print(f"   ✅ Prédictions sauvegardées : {submission_path}")
+        print(f"   Predictions sauvegardees : {submission_path}")
 
         # Sauvegarder aussi une version "latest" pour faciliter l'utilisation
         latest_path = "submissions/latest_submission.csv"
         submission_df.to_csv(latest_path, index=False)
-        print(f"   ✅ Copie sauvegardée : {latest_path}")
+        print(f"   Copie sauvegardee : {latest_path}")
 
         # Créer un résumé des prédictions
         summary_path = f"submissions/summary_{timestamp}.txt"
@@ -173,14 +195,14 @@ def predict_and_submit():
             f.write("\n\nAperçu des prédictions :\n")
             f.write(str(submission_df.head(10)))
 
-        print(f"   ✅ Résumé sauvegardé : {summary_path}")
+        print(f"   Resume sauvegarde : {summary_path}")
 
     except Exception as e:
-        print(f"❌ ERREUR lors de la sauvegarde : {e}")
+        print(f"ERREUR lors de la sauvegarde : {e}")
         return None
 
     # 6. Génération du résumé final
-    print("\n📊 6. Génération du résumé final...")
+    print("\n 6. Generation du resume final...")
 
     try:
         # Créer un résumé simple
@@ -201,26 +223,27 @@ Aperçu des données :
         with open(final_summary_path, "w", encoding="utf-8") as f:
             f.write(final_summary)
 
-        print(f"   ✅ Résumé final : {final_summary_path}")
+        print(f"   Resume final : {final_summary_path}")
 
     except Exception as e:
-        print(f"   ⚠️  Avertissement résumé final : {e}")
+        print(f"   Avertissement resume final : {e}")
 
     # 7. Statistiques finales
-    print("\n📈 7. Statistiques des prédictions :")
-    print(f"   • Nombre total de prédictions : {len(submission_df)}")
+    # 7. Statistiques finales
+    print("\n 7. Statistiques des predictions :")
+    print(f"   • Nombre total de predictions : {len(submission_df)}")
     print(f"   • Colonnes : {list(submission_df.columns)}")
-    print(f"   • Statistiques des risk_scores :")
+    print("   • Statistiques des risk_scores :")
     print(f"     - Min: {submission_df['risk_score'].min():.3f}")
     print(f"     - Max: {submission_df['risk_score'].max():.3f}")
     print(f"     - Moyenne: {submission_df['risk_score'].mean():.3f}")
-    print(f"     - Médiane: {submission_df['risk_score'].median():.3f}")
+    print(f"     - Mediane: {submission_df['risk_score'].median():.3f}")
 
     print("\n" + "=" * 60)
-    print("🎉 SCRIPT 3/3 TERMINÉ AVEC SUCCÈS !")
-    print("✅ Prédictions finales générées")
-    print(f"📁 Fichier de soumission : {submission_path}")
-    print("🏁 PIPELINE COMPLET TERMINÉ !")
+    print("SCRIPT 3/3 TERMINE AVEC SUCCES !")
+    print("Predictions finales generees")
+    print(f"Fichier de soumission : {submission_path}")
+    print("PIPELINE COMPLET TERMINE !")
     print("=" * 60)
 
     return {

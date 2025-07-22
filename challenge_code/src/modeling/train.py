@@ -302,7 +302,7 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": COXNET_PARAMS,
         }
     except Exception as e:
-        print(f"   ⚠️  Erreur CoxNet: {e}")
+        print(f"  Erreur CoxNet: {e}")
 
     # Extra Survival Trees
     print("Entraînement du modèle Extra Survival Trees...")
@@ -315,7 +315,7 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": EXTRA_TREES_PARAMS,
         }
     except Exception as e:
-        print(f"   ⚠️  Erreur Extra Trees: {e}")
+        print(f"   Erreur Extra Trees: {e}")
 
     # Componentwise Gradient Boosting
     print("Entraînement du modèle Componentwise Gradient Boosting...")
@@ -328,7 +328,7 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": COMPONENTWISE_GB_PARAMS,
         }
     except Exception as e:
-        print(f"   ⚠️  Erreur Componentwise GB: {e}")
+        print(f"  Erreur Componentwise GB: {e}")
 
     # PyCox DeepSurv
     if PYCOX_AVAILABLE:
@@ -344,9 +344,9 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
                 "params": PYCOX_DEEPSURV_PARAMS,
             }
         except Exception as e:
-            print(f"   ⚠️  Erreur PyCox DeepSurv: {e}")
+            print(f"   Erreur PyCox DeepSurv: {e}")
     else:
-        print("   ⚠️  PyCox non disponible, DeepSurv ignoré")
+        print("   PyCox non disponible, DeepSurv ignore")
 
     return models
 
@@ -374,13 +374,13 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     lr_factor = config.get("lr_factor", 0.5)
     lr_patience = config.get("lr_patience", 25)
 
-    print(f"   🧠 Entraînement PyCox DeepSurv:")
-    print(f"      📐 Architecture: {hidden_layers}")
-    print(f"      🎯 Learning Rate: {learning_rate}, Batch Size: {batch_size}")
-    print(f"      🔄 Époques: {epochs}, Patience: {patience}")
-    print(f"      🛡️  Dropout: {dropout}, Weight Decay: {weight_decay}")
+    print(f" Entraînement PyCox DeepSurv:")
+    print(f" Architecture: {hidden_layers}")
+    print(f" Learning Rate: {learning_rate}, Batch Size: {batch_size}")
+    print(f" Époques: {epochs}, Patience: {patience}")
+    print(f" Dropout: {dropout}, Weight Decay: {weight_decay}")
     if lr_scheduler:
-        print(f"      📉 LR Scheduler: factor={lr_factor}, patience={lr_patience}")
+        print(f" LR Scheduler: factor={lr_factor}, patience={lr_patience}")
 
     # Préparation des données
     X_train_np = X_train.values if hasattr(X_train, "values") else X_train
@@ -535,8 +535,8 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
 
         # Early stopping
         if patience_counter >= patience:
-            print(f"   🔄 Early stopping à l'époque {epoch+1} (patience={patience})")
-            print(f"   🏆 Pas d'amélioration depuis {no_improvement_epochs} époques")
+            print(f"    Early stopping à l'époque {epoch+1} (patience={patience})")
+            print(f"    Pas d'amélioration depuis {no_improvement_epochs} époques")
             break
 
     # Créer un wrapper pour la compatibilité avec scikit-survival
@@ -576,14 +576,14 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         # C-index sur les données de validation
         cindex_val = concordance_index_ipcw(y_train_orig, y_val_orig, val_pred)[0]
 
-        print(f"   📊 C-Index Train: {cindex_train:.5f}")
-        print(f"   📊 C-Index Validation: {cindex_val:.5f}")
+        print(f"    C-Index Train: {cindex_train:.5f}")
+        print(f"    C-Index Validation: {cindex_val:.5f}")
 
     except Exception as e:
-        print(f"   ⚠️  Erreur lors du calcul du C-index: {e}")
+        print(f"     Erreur lors du calcul du C-index: {e}")
 
     # Affichage des résultats détaillés
-    print(f"\n   📊 === RÉSULTATS D'ENTRAÎNEMENT ===")
+    print(f"\n    === RÉSULTATS D'ENTRAÎNEMENT ===")
 
     # Statistiques sur la convergence
     best_cindex_val_overall = np.nanmax(cindex_val_hist)
@@ -598,41 +598,39 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         if len(recent_vals) > 5:
             trend = np.polyfit(range(len(recent_vals)), recent_vals, 1)[0]
             trend_status = (
-                "📈 Croissante"
+                " Croissante"
                 if trend > 0.001
-                else "📉 Décroissante" if trend < -0.001 else "➡️  Stable"
+                else " Décroissante" if trend < -0.001 else "  Stable"
             )
         else:
-            trend_status = "❓ Indéterminée"
+            trend_status = " Indéterminée"
     else:
-        trend_status = "❓ Trop peu d'époques"
+        trend_status = " Trop peu d'époques"
 
     print(
-        f"   🏆 Meilleur C-Index Validation: {best_cindex_val_overall:.5f} (époque {best_epoch_overall})"
+        f" Meilleur C-Index Validation: {best_cindex_val_overall:.5f} (époque {best_epoch_overall})"
     )
-    print(
-        f"   📈 C-Index Final: Train={final_cindex_train:.5f}, Val={final_cindex_val:.5f}"
-    )
-    print(f"   📊 Tendance récente: {trend_status}")
-    print(f"   ⏱️  Nombre d'époques: {len(cindex_train_hist)}")
+    print(f" C-Index Final: Train={final_cindex_train:.5f}, Val={final_cindex_val:.5f}")
+    print(f"Tendance récente: {trend_status}")
+    print(f" Nombre d'époques: {len(cindex_train_hist)}")
 
     # Recommandations basées sur les résultats
     val_improvement = best_cindex_val_overall - (
         cindex_val_hist[0] if cindex_val_hist else 0
     )
     if val_improvement < 0.01:
-        print(f"   ⚠️  Amélioration faible ({val_improvement:.4f}). Considérez:")
-        print(f"      • Augmenter le learning rate ou réduire la régularisation")
-        print(f"      • Changer l'architecture du réseau")
-        print(f"      • Vérifier la qualité des données")
+        print(f" Amélioration faible ({val_improvement:.4f}). Considérez:")
+        print(f" Augmenter le learning rate ou réduire la régularisation")
+        print(f" Changer l'architecture du réseau")
+        print(f" Vérifier la qualité des données")
     elif val_improvement > 0.05:
-        print(f"   ✅ Bonne amélioration ({val_improvement:.4f})")
+        print(f"Bonne amélioration ({val_improvement:.4f})")
 
     if final_cindex_train - final_cindex_val > 0.1:
         print(
-            f"   ⚠️  Possible overfitting (écart: {final_cindex_train - final_cindex_val:.4f})"
+            f"  Possible overfitting (écart: {final_cindex_train - final_cindex_val:.4f})"
         )
-        print(f"      • Augmenter dropout ou weight decay")
-        print(f"      • Réduire la complexité du modèle")
+        print(f" Augmenter dropout ou weight decay")
+        print(f" Réduire la complexité du modèle")
 
     return wrapper
