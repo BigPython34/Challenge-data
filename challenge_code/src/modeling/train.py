@@ -463,9 +463,7 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     patience_counter = 0
     no_improvement_epochs = 0
 
-    print(
-        f"   🚀 Début entraînement DeepSurv ({epochs} epochs max, patience={patience})"
-    )
+    print(f"    Début entraînement DeepSurv ({epochs} epochs max, patience={patience})")
 
     for epoch in range(epochs):
         # Une époque d'entraînement

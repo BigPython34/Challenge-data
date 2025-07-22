@@ -50,7 +50,7 @@ def prepare_enriched_dataset(
 ):
     """Prépare un dataset enrichi avec toutes les features et imputation avancée"""
     print(
-        f"\n🔧 Préparation du dataset enrichi ({'entraînement' if is_training else 'test'})..."
+        f"\nPréparation du dataset enrichi ({'entraînement' if is_training else 'test'})..."
     )
 
     # 1. Création de features basées sur les gènes
@@ -104,7 +104,7 @@ def prepare_enriched_dataset(
             df_enriched[col] = df_enriched[col].fillna(0)
 
     # 9. Imputation avancée
-    print(f"📊 Valeurs manquantes avant imputation : {df_enriched.isna().sum().sum()}")
+    print(f"Valeurs manquantes avant imputation : {df_enriched.isna().sum().sum()}")
 
     if is_training:
         # Appliquer l'imputation avancée pour les données d'entraînement
@@ -143,9 +143,7 @@ def prepare_enriched_dataset(
             )
             imputation_metadata["simple_imputer_fallback"] = simple_imputer
 
-        print(
-            f"✅ Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}"
-        )
+        print(f"Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}")
         return df_enriched, imputation_metadata
 
     else:
@@ -169,9 +167,7 @@ def prepare_enriched_dataset(
         if "sex" in df_enriched.columns and df_enriched["sex"].isna().any():
             df_enriched = impute_sex_advanced_v2(df_enriched)
 
-        print(
-            f"✅ Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}"
-        )
+        print(f"Valeurs manquantes après imputation : {df_enriched.isna().sum().sum()}")
         return df_enriched
 
 
@@ -280,30 +276,30 @@ def advanced_imputation(
     if "ID" in categorical_cols:
         categorical_cols.remove("ID")
 
-    print(f"🔧 Imputation avancée avec méthode : {method}")
-    print(f"   • Colonnes numériques : {len(numeric_cols)}")
-    print(f"   • Colonnes catégorielles : {len(categorical_cols)}")
+    print(f"Imputation avancée avec méthode : {method}")
+    print(f"   Colonnes numériques : {len(numeric_cols)}")
+    print(f"   Colonnes catégorielles : {len(categorical_cols)}")
 
     # 1. Imputation des colonnes numériques
     if numeric_cols and method == "knn":
-        print("   📊 Imputation KNN pour les variables numériques...")
+        print("   Imputation KNN pour les variables numériques...")
         knn_imputer = KNNImputer(n_neighbors=5, weights="distance")
         df_imputed[numeric_cols] = knn_imputer.fit_transform(df_imputed[numeric_cols])
         imputation_metadata["knn_imputer"] = knn_imputer
 
     elif numeric_cols and method == "rf":
-        print("   🌲 Imputation Random Forest pour les variables numériques...")
+        print("   Imputation Random Forest pour les variables numériques...")
         df_imputed = random_forest_imputation(df_imputed, numeric_cols)
 
     elif numeric_cols and method == "cluster":
-        print("   🎯 Imputation par clustering pour les variables numériques...")
+        print("   Imputation par clustering pour les variables numériques...")
         df_imputed, cluster_metadata = cluster_based_imputation(
             df_imputed, cluster_impute_cols or numeric_cols
         )
         imputation_metadata.update(cluster_metadata)
 
     elif numeric_cols and method == "iterative":
-        print("   🔄 Imputation itérative pour les variables numériques...")
+        print("   Imputation itérative pour les variables numériques...")
         iterative_imputer = IterativeImputer(
             estimator=BayesianRidge(),
             max_iter=10,
@@ -317,7 +313,7 @@ def advanced_imputation(
 
     elif numeric_cols:
         # Fallback vers l'imputation médiane simple
-        print("   📈 Imputation médiane pour les variables numériques...")
+        print("   Imputation médiane pour les variables numériques...")
         simple_imputer = SimpleImputer(strategy="median")
         df_imputed[numeric_cols] = simple_imputer.fit_transform(
             df_imputed[numeric_cols]
@@ -326,7 +322,7 @@ def advanced_imputation(
 
     # 2. Imputation des colonnes catégorielles
     if categorical_cols:
-        print("   📝 Imputation mode pour les variables catégorielles...")
+        print("   Imputation mode pour les variables catégorielles...")
         for col in categorical_cols:
             if df_imputed[col].isna().any():
                 mode_value = (
@@ -338,14 +334,14 @@ def advanced_imputation(
 
     # 3. Imputation spéciale pour la colonne 'sex' avec modèle de bagging
     if sex_impute and "sex" in df_imputed.columns:
-        print("   👤 Imputation spécialisée pour la variable 'sex'...")
+        print("   Imputation spécialisée pour la variable 'sex'...")
         df_imputed = impute_sex_advanced_v2(df_imputed)
 
     # 4. Gestion des outliers
     df_imputed = handle_outliers(df_imputed, numeric_cols, method="iqr", multiplier=2.0)
 
     print(
-        f"   ✅ Imputation terminée : {df_imputed.isna().sum().sum()} valeurs manquantes restantes"
+        f"   Imputation terminée : {df_imputed.isna().sum().sum()} valeurs manquantes restantes"
     )
 
     return df_imputed, imputation_metadata
@@ -481,7 +477,7 @@ def advanced_outlier_detection(df, numeric_cols, contamination=0.1):
 
     if outliers_detected > 0:
         print(
-            f"   🔍 {outliers_detected} outliers détectés et traités avec consensus multi-méthodes"
+            f"   {outliers_detected} outliers détectés et traités avec consensus multi-méthodes"
         )
 
     return df_clean
@@ -533,7 +529,7 @@ def iterative_ensemble_imputation(df, numeric_cols, max_iter=None):
     df_imputed[numeric_cols] = ensemble_sum / weights_sum
 
     metadata = {"iterative_imputers": imputers, "ensemble_weights": weights_sum}
-    print(f"   ✅ Ensemble de {len(estimators)} modèles itératifs convergé")
+    print(f"   Ensemble de {len(estimators)} modèles itératifs convergé")
 
     return df_imputed, metadata
 
@@ -566,7 +562,7 @@ def adaptive_knn_imputation(df, numeric_cols):
         "optimal_k": optimal_k,
     }
 
-    print(f"   📊 KNN adaptatif (k={optimal_k}) avec distance pondérée")
+    print(f"   KNN adaptatif (k={optimal_k}) avec distance pondérée")
     return df_imputed, metadata
 
 
@@ -639,7 +635,7 @@ def hierarchical_cluster_imputation(df, cluster_cols, min_cluster_size=10):
         "eps_used": eps,
     }
 
-    print(f"   🎯 Clustering hiérarchique: {len(unique_clusters)} clusters détectés")
+    print(f"   Clustering hiérarchique: {len(unique_clusters)} clusters détectés")
     return df_cluster, metadata
 
 
@@ -762,7 +758,7 @@ def hybrid_imputation_strategy(df, numeric_cols):
 
     metadata = {"hybrid_strategies": strategy_used}
     print(
-        f"   🔀 Stratégies hybrides: {len(set(strategy_used.values()))} méthodes utilisées"
+        f"   Stratégies hybrides: {len(set(strategy_used.values()))} méthodes utilisées"
     )
     return df_hybrid, metadata
 
@@ -820,10 +816,10 @@ def impute_sex_advanced_v2(df):
         predictions = ensemble.predict(X_predict)
         df_imputed.loc[unknown_mask, "sex"] = predictions
 
-        print(f"   ✅ {unknown_mask.sum()} valeurs 'sex' imputées avec ensemble avancé")
+        print(f"   {unknown_mask.sum()} valeurs 'sex' imputées avec ensemble avancé")
 
     except Exception as e:
-        print(f"   ⚠️  Fallback vers méthode simple pour 'sex': {e}")
+        print(f"   Fallback vers méthode simple pour 'sex': {e}")
         most_frequent = (
             known_data["sex"].mode().iloc[0] if len(known_data["sex"].mode()) > 0 else 0
         )
@@ -890,7 +886,7 @@ def handle_outliers(df, numeric_cols, method="iqr", multiplier=1.5, threshold=0.
             upper_bound = mean_val + multiplier * std_val
 
         else:
-            print(f"   ⚠️  Méthode '{method}' non reconnue pour {col}")
+            print(f"   Méthode '{method}' non reconnue pour {col}")
             continue
 
         # Compter les outliers avant traitement
@@ -904,12 +900,12 @@ def handle_outliers(df, numeric_cols, method="iqr", multiplier=1.5, threshold=0.
         if outliers_before > 0:
             outliers_treated += outliers_before
             print(
-                f"   🔧 {outliers_before} outliers traités pour '{col}' [{lower_bound:.2f}, {upper_bound:.2f}]"
+                f"   {outliers_before} outliers traités pour '{col}' [{lower_bound:.2f}, {upper_bound:.2f}]"
             )
 
     if outliers_treated > 0:
-        print(f"   ✅ Total: {outliers_treated} outliers traités")
+        print(f"   Total: {outliers_treated} outliers traités")
     else:
-        print("   ℹ️  Aucun outlier détecté")
+        print("   Aucun outlier détecté")
 
     return df_out

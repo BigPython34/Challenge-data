@@ -1,8 +1,8 @@
 === RÉSUMÉ FINAL DES PRÉDICTIONS ===
-Date de génération : 2025-07-22T09:39:57.108717
+Date de génération : 2025-07-22T13:55:30.985327
 Modèle utilisé : gradient_boosting
 Nombre de prédictions : 1193
-Fichier de soumission : submission_gradient_boosting_20250722_093957.csv
+Fichier de soumission : submission_gradient_boosting_20250722_135530.csv
 
 Statistiques des prédictions :
 count    1193.000000

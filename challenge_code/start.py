@@ -10,24 +10,24 @@ from pathlib import Path
 
 def print_banner():
     """Affiche la bannière du projet"""
-    print("🧬" + "=" * 60 + "🧬")
+    print("=" * 60)
     print("    CHALLENGE DATA - LEUKEMIA RISK PREDICTION")
-    print("🧬" + "=" * 60 + "🧬")
-    print("    🎯 Prédiction du risque de leucémie avec ML")
-    print("    📊 7 modèles de survie avancés")
-    print("    🚀 Pipeline automatisé complet")
-    print("🧬" + "=" * 60 + "🧬")
+    print("=" * 60)
+    print("    Prédiction du risque de leucémie avec ML")
+    print("    7 modèles de survie avancés")
+    print("    Pipeline automatisé complet")
+    print("=" * 60)
 
 
 def check_python_version():
     """Vérifie la version de Python"""
     version = sys.version_info
     if version.major < 3 or (version.major == 3 and version.minor < 8):
-        print("❌ Python 3.8+ requis")
+        print("[ERREUR] Python 3.8+ requis")
         print(f"   Version actuelle: {version.major}.{version.minor}")
         return False
 
-    print(f"✅ Python {version.major}.{version.minor}.{version.micro}")
+    print(f"[OK] Python {version.major}.{version.minor}.{version.micro}")
     return True
 
 
@@ -47,24 +47,24 @@ def check_data_files():
             missing.append(file_path)
 
     if missing:
-        print("❌ Fichiers de données manquants:")
+        print("[ERREUR] Fichiers de données manquants:")
         for file_path in missing:
             print(f"   • {file_path}")
         return False
 
-    print("✅ Tous les fichiers de données sont présents")
+    print("[OK] Tous les fichiers de données sont présents")
     return True
 
 
 def run_command(command, description):
     """Exécute une commande et affiche le résultat"""
-    print(f"\n🔄 {description}...")
+    print(f"\n{description}...")
     try:
         subprocess.run(command, capture_output=True, text=True, check=True)
-        print(f"✅ {description} - Succès")
+        print(f" {description} - Succès")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ {description} - Erreur:")
+        print(f" {description} - Erreur:")
         print(f"   {e.stderr}")
         return False
 
@@ -73,7 +73,7 @@ def main():
     """Fonction principale du script de démarrage"""
     print_banner()
 
-    print("\n📋 VÉRIFICATIONS PRÉLIMINAIRES")
+    print("\nVÉRIFICATIONS PRÉLIMINAIRES")
     print("-" * 40)
 
     # Vérifications de base
@@ -83,60 +83,60 @@ def main():
     ]
 
     for check_name, check_func in checks:
-        print(f"\n🔍 {check_name}:")
+        print(f"\n{check_name}:")
         if not check_func():
-            print(f"\n❌ Vérification échouée: {check_name}")
-            print("🛠️  Corrigez les erreurs avant de continuer")
+            print(f"\nVérification échouée: {check_name}")
+            print("Corrigez les erreurs avant de continuer")
             return 1
 
-    print("\n✅ Toutes les vérifications passées!")
+    print("\nToutes les vérifications passées!")
 
     # Menu interactif
     while True:
-        print("\n" + "🚀 QUE VOULEZ-VOUS FAIRE ?")
+        print("\nQUE VOULEZ-VOUS FAIRE ?")
         print("=" * 40)
-        print("1. 📦 Installer les dépendances")
-        print("2. 🧪 Tester la structure du projet")
-        print("3. 🚀 Lancer le pipeline complet")
-        print("4. 📊 Étapes individuelles:")
+        print("1. Installer les dépendances")
+        print("2. Tester la structure du projet")
+        print("3. Lancer le pipeline complet")
+        print("4. Étapes individuelles:")
         print("   a. Préparer les données")
         print("   b. Entraîner les modèles")
         print("   c. Générer les prédictions")
-        print("5. 🧹 Nettoyer les sorties")
-        print("6. ❌ Quitter")
+        print("5. Nettoyer les sorties")
+        print("6. Quitter")
 
-        choice = input("\n👉 Votre choix (1-6): ").strip()
+        choice = input("\nVotre choix (1-6): ").strip()
 
         if choice == "1":
-            print("\n📦 INSTALLATION DES DÉPENDANCES")
+            print("\nINSTALLATION DES DÉPENDANCES")
             print("-" * 40)
             success = run_command(
                 [sys.executable, "install_deps.py"], "Installation des dépendances"
             )
             if not success:
-                print("💡 Essayez manuellement: pip install -r requirements.txt")
+                print("Essayez manuellement: pip install -r requirements.txt")
 
         elif choice == "2":
-            print("\n🧪 TEST DE LA STRUCTURE")
+            print("\nTEST DE LA STRUCTURE")
             print("-" * 40)
             run_command(
                 [sys.executable, "test_structure.py"], "Test de la structure du projet"
             )
 
         elif choice == "3":
-            print("\n🚀 PIPELINE COMPLET")
+            print("\nPIPELINE COMPLET")
             print("-" * 40)
-            print("⚠️  Cette opération peut prendre 10-30 minutes")
+            print("Cette opération peut prendre 10-30 minutes")
             confirm = input("Continuer ? (o/N): ").strip().lower()
             if confirm in ["o", "oui", "y", "yes"]:
                 run_command(
                     [sys.executable, "main.py"], "Exécution du pipeline complet"
                 )
             else:
-                print("🔙 Opération annulée")
+                print("Opération annulée")
 
         elif choice == "4":
-            print("\n📊 ÉTAPES INDIVIDUELLES")
+            print("\nÉTAPES INDIVIDUELLES")
             print("-" * 40)
             step_choice = input("Choisir (a/b/c): ").strip().lower()
 
@@ -153,10 +153,10 @@ def main():
                     [sys.executable, "3_predict.py"], "Génération des prédictions"
                 )
             else:
-                print("❌ Choix invalide")
+                print("Choix invalide")
 
         elif choice == "5":
-            print("\n🧹 NETTOYAGE")
+            print("\nNETTOYAGE")
             print("-" * 40)
             confirm = (
                 input("Supprimer tous les fichiers générés ? (o/N): ").strip().lower()
@@ -166,14 +166,14 @@ def main():
                     [sys.executable, "clean_outputs.py"], "Nettoyage des sorties"
                 )
             else:
-                print("🔙 Opération annulée")
+                print("Opération annulée")
 
         elif choice == "6":
-            print("\n👋 Au revoir!")
+            print("\nAu revoir!")
             break
 
         else:
-            print("❌ Choix invalide, veuillez recommencer")
+            print("Choix invalide, veuillez recommencer")
 
     return 0
 
@@ -183,5 +183,5 @@ if __name__ == "__main__":
         exit_code = main()
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        print("\n\n👋 Interruption par l'utilisateur")
+        print("\n\nInterruption par l'utilisateur")
         sys.exit(0)

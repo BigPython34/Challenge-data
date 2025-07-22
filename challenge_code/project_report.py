@@ -168,33 +168,33 @@ def get_model_performance():
 
 def generate_report():
     """Génère un rapport complet"""
-    print("📊 RAPPORT D'ÉTAT DU PROJET")
+    print("RAPPORT D'ÉTAT DU PROJET")
     print("=" * 60)
-    print(f"📅 Généré le: {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}")
+    print(f"Généré le: {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}")
 
     # Analyse des modèles
-    print("\n🤖 MODÈLES ENTRAÎNÉS")
+    print("\nMODÈLES ENTRAÎNÉS")
     print("-" * 30)
     models_info = analyze_models()
-    print(f"📊 Nombre de modèles: {models_info['count']}")
-    print(f"💾 Taille totale: {models_info['total_size_mb']} MB")
+    print(f"Nombre de modèles: {models_info['count']}")
+    print(f"Taille totale: {models_info['total_size_mb']} MB")
 
     if models_info["models"]:
-        print("\n📋 Modèles récents:")
+        print("\nModèles récents:")
         for model in models_info["models"][:5]:  # Top 5
             print(
                 f"  • {model['name']} - {model['size_mb']} MB - {model['modified'].strftime('%d/%m %H:%M')}"
             )
 
     # Analyse des datasets
-    print("\n📊 DATASETS ENRICHIS")
+    print("\nDATASETS ENRICHIS")
     print("-" * 30)
     datasets_info = analyze_datasets()
-    print(f"📊 Nombre de datasets: {datasets_info['count']}")
-    print(f"💾 Taille totale: {datasets_info['total_size_mb']} MB")
+    print(f"Nombre de datasets: {datasets_info['count']}")
+    print(f"Taille totale: {datasets_info['total_size_mb']} MB")
 
     if datasets_info["datasets"]:
-        print("\n📋 Datasets disponibles:")
+        print("\nDatasets disponibles:")
         for dataset in datasets_info["datasets"]:
             cols_info = (
                 f" - {dataset['columns']} colonnes"
@@ -204,14 +204,14 @@ def generate_report():
             print(f"  • {dataset['name']} - {dataset['size_mb']} MB{cols_info}")
 
     # Analyse des soumissions
-    print("\n📤 SOUMISSIONS")
+    print("\nSOUMISSIONS")
     print("-" * 30)
     submissions_info = analyze_submissions()
-    print(f"📊 Nombre de soumissions: {submissions_info['count']}")
-    print(f"💾 Taille totale: {submissions_info['total_size_mb']} MB")
+    print(f"Nombre de soumissions: {submissions_info['count']}")
+    print(f"Taille totale: {submissions_info['total_size_mb']} MB")
 
     if submissions_info["submissions"]:
-        print("\n📋 Soumissions récentes:")
+        print("\nSoumissions récentes:")
         for sub in submissions_info["submissions"][:3]:  # Top 3
             rows_info = f" - {sub['rows']} lignes" if sub.get("rows") != "?" else ""
             print(
@@ -219,7 +219,7 @@ def generate_report():
             )
 
     # Performance des modèles
-    print("\n🎯 PERFORMANCES")
+    print("\nPERFORMANCES")
     print("-" * 30)
     performance = get_model_performance()
     print(performance[:500] + "..." if len(performance) > 500 else performance)
@@ -234,16 +234,16 @@ def generate_report():
         models_info["count"] + datasets_info["count"] + submissions_info["count"]
     )
 
-    print("\n💫 RÉSUMÉ GLOBAL")
+    print("\nRÉSUMÉ GLOBAL")
     print("-" * 30)
-    print(f"📁 Total de fichiers générés: {total_files}")
-    print(f"💾 Espace disque utilisé: {total_size:.2f} MB")
+    print(f"Total de fichiers générés: {total_files}")
+    print(f"Espace disque utilisé: {total_size:.2f} MB")
     print(
-        f"🚀 Projet prêt: {'✅ Oui' if models_info['count'] > 0 else '❌ Non (aucun modèle)'}"
+        f"Projet prêt: {'✅ Oui' if models_info['count'] > 0 else '❌ Non (aucun modèle)'}"
     )
 
     # Recommandations
-    print("\n💡 RECOMMANDATIONS")
+    print("\nRECOMMANDATIONS")
     print("-" * 30)
     if models_info["count"] == 0:
         print("• Lancez 'python main.py' pour commencer l'entraînement")
@@ -253,7 +253,7 @@ def generate_report():
         print("• Le projet est opérationnel et optimisé")
 
     print(
-        f"\n📈 Dernière activité: {max([m.get('modified', datetime.min) for m in models_info['models']] + [datetime.min]).strftime('%d/%m/%Y à %H:%M')}"
+        f"\nDernière activité: {max([m.get('modified', datetime.min) for m in models_info['models']] + [datetime.min]).strftime('%d/%m/%Y à %H:%M')}"
     )
 
 
