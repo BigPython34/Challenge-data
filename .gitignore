@@ -5,7 +5,48 @@ __pycache__/
 
 # C extensions
 *.so
-models/*.pkl
+
+# MODÈLES DE MACHINE LEARNING - TROP VOLUMINEUX POUR GITHUB
+# Ignorer TOUS les fichiers de modèles, peu importe où ils sont
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+*.model
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Dossiers de modèles
+models/
+trained_models/
+checkpoints/
+weights/
+
+# GROS FICHIERS DE DONNÉES
+# Ignorer les datasets volumineux
+*.csv
+*.parquet
+*.feather
+*.arrow
+*.h5
+*.hdf5
+*.zarr
+*.npy
+*.npz
+*.json
+*.jsonl
+*.tsv
+*.txt
+
+# Sauf les petits fichiers de config
+!requirements.txt
+!README.txt
+!*.md
+!config.json
+
 # Distribution / packaging
 .Python
 build/
@@ -25,8 +66,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-trained_models/*.pkl
-trained_models/*.joblib
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
