@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import time
+import argparse
 
 
 def run_script(script_name, step_number, total_steps, selected_model=None):
@@ -166,41 +167,49 @@ def run_from_step(step_number, selected_model=None):
 
 
 if __name__ == "__main__":
-    selected_model = None
-    args = sys.argv[1:]
-    if "--model" in args:
-        idx = args.index("--model")
-        if idx + 1 < len(args):
-            selected_model = args[idx + 1]
-            # Remove --model and its value from args for further parsing
-            del args[idx : idx + 2]
-    if len(args) > 0:
-        if args[0] == "--step-1":
-            run_step_1()
-        elif args[0] == "--step-2":
-            run_step_2(selected_model)
-        elif args[0] == "--step-3":
-            run_step_3(selected_model)
-        elif args[0].startswith("--from-step-"):
-            step_num = int(args[0].split("-")[-1])
-            run_from_step(step_num, selected_model)
-        elif args[0] == "--help":
-            print("Usage:")
-            print("  python main.py                  # Pipeline complet (3 étapes)")
-            print("  python main.py --step-1         # Étape 1 seulement (préparation)")
-            print(
-                "  python main.py --step-2         # Étape 2 seulement (entraînement)"
-            )
-            print("  python main.py --step-3         # Étape 3 seulement (prédictions)")
-            print("  python main.py --from-step-2    # À partir de l'étape 2")
-            print("  python main.py --from-step-3    # À partir de l'étape 3")
-            print(
-                "  python main.py --model xgboost  # Choisir le modèle à entraîner/prédire"
-            )
-            print("  python main.py --help           # Afficher cette aide")
-        else:
-            print(f"Option inconnue: {args[0]}")
-            print("Utilisez --help pour voir les options disponibles")
+    # Configuration des arguments en ligne de commande
+    parser = argparse.ArgumentParser(description="Pipeline de ML pour la LMA")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Nom du modèle à utiliser pour l'entraînement/prédiction",
+    )
+    parser.add_argument(
+        "--step-1",
+        action="store_true",
+        help="Exécuter seulement l'étape 1 (préparation)",
+    )
+    parser.add_argument(
+        "--step-2",
+        action="store_true",
+        help="Exécuter seulement l'étape 2 (entraînement)",
+    )
+    parser.add_argument(
+        "--step-3",
+        action="store_true",
+        help="Exécuter seulement l'étape 3 (prédictions)",
+    )
+    parser.add_argument(
+        "--from-step-2", action="store_true", help="Exécuter à partir de l'étape 2"
+    )
+    parser.add_argument(
+        "--from-step-3", action="store_true", help="Exécuter à partir de l'étape 3"
+    )
+
+    args = parser.parse_args()
+
+    # Exécution selon les arguments
+    if args.step_1:
+        run_step_1()
+    elif args.step_2:
+        run_step_2(args.model)
+    elif args.step_3:
+        run_step_3(args.model)
+    elif args.from_step_2:
+        run_from_step(2, args.model)
+    elif args.from_step_3:
+        run_from_step(3, args.model)
     else:
         # Pipeline complet par défaut
-        main(selected_model)
+        main(args.model)

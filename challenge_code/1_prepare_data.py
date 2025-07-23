@@ -163,6 +163,37 @@ def prepare_and_save_dataset():
     df_enriched_with_target.to_csv(enriched_train_csv, index=False)
     print(f"   Dataset enrichi d'entrainement exporte : {enriched_train_csv}")
 
+    # 6. Préparation des données de test également
+    print("\n 6. Preparation des donnees de test...")
+    try:
+        # Charger les données de test
+        test_clinical = data.get("clinical_test")
+        test_molecular = data.get("molecular_test")
+
+        if test_clinical is not None and test_molecular is not None:
+            print(f"   Donnees cliniques de test : {test_clinical.shape}")
+            print(f"   Donnees moleculaires de test : {test_molecular.shape}")
+
+            # Préparer les données de test avec le même imputer
+            df_test_enriched = prepare_enriched_dataset(
+                test_clinical,
+                test_molecular,
+                target_df=None,  # Pas de target pour le test
+                imputer=imputer,  # Utiliser le même imputer que pour l'entraînement
+                advanced_imputation_method="medical",
+                is_training=False,
+                save_to_file="datasets/enriched_test.csv",  # Sauvegarder automatiquement
+            )
+
+            print(f"   Dataset enrichi de test cree : {df_test_enriched.shape}")
+            print("   Dataset enrichi de test sauvegarde : datasets/enriched_test.csv")
+        else:
+            print("   Donnees de test non trouvees, passage ignore")
+
+    except Exception as e:
+        print(f"   Avertissement lors de la preparation des donnees de test : {e}")
+        print("   Les donnees de test seront preparees lors de la prediction")
+
     print("\n" + "=" * 60)
     print("SCRIPT 1/3 TERMINE AVEC SUCCES !")
     print("Dataset pret pour l'entrainement")

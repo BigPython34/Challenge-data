@@ -633,4 +633,34 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         print(f" Augmenter dropout ou weight decay")
         print(f" Réduire la complexité du modèle")
 
+    # Analyse des erreurs de prédiction sur la validation
+    try:
+        # On suppose que X_val_orig est un DataFrame avec colonne 'ID'
+        ids = (
+            X_val_orig["ID"]
+            if "ID" in X_val_orig.columns
+            else np.arange(len(X_val_orig))
+        )
+        observed = [y[1] for y in y_val_orig]  # Durée observée
+        predicted = val_pred  # Prédiction du modèle (log hazard ou score)
+        errors = np.abs(predicted - observed)
+
+        recap_df = pd.DataFrame(
+            {
+                "ID": ids,
+                "observed_duration": observed,
+                "predicted_score": predicted,
+                "abs_error": errors,
+            }
+        )
+
+        # Trier par erreur décroissante et garder les pires cas
+        recap_df = recap_df.sort_values("abs_error", ascending=False)
+        top_n = 20
+        recap_path = "models/validation_outliers.csv"
+        recap_df.head(top_n).to_csv(recap_path, index=False)
+        print(f"  Fichier recap des {top_n} plus gros écarts sauvegardé : {recap_path}")
+    except Exception as e:
+        print(f"  Erreur lors de la génération du recap des outliers : {e}")
+
     return wrapper

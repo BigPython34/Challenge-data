@@ -7,19 +7,22 @@ import pickle
 import os
 import joblib
 import pandas as pd
+import argparse
 from src.data.prepare import prepare_enriched_dataset
 
 # Import pour PyCox DeepSurv si disponible
-try:
-    from src.modeling.train import PyCoxWrapper
-
-    PYCOX_AVAILABLE = True
-except ImportError:
-    PYCOX_AVAILABLE = False
+from src.modeling.train import PyCoxWrapper
 
 
-def predict_and_submit():
-    """Applique le modèle entraîné aux données de test et génère les soumissions"""
+def predict_and_submit(selected_model=None):
+    """Applique le modèle entraîné aux données de test et génère les soumissions
+
+    Parameters:
+    -----------
+    selected_model : str, optional
+        Nom du modèle spécifique à utiliser. Si None, utilise le meilleur modèle.
+        Format attendu: nom du fichier sans extension (ex: 'cox_alpha1.0_20250723_120432')
+    """
     print("=== SCRIPT 3/3 : PREDICTIONS FINALES ===")
     print("Objectif : Generer les predictions sur les donnees de test")
     print("=" * 60)
@@ -27,38 +30,117 @@ def predict_and_submit():
     # 1. Vérification et chargement du modèle et de l'imputer
     print("\n 1. Chargement du modele entraine et de l'imputer...")
 
-    model_package_path = "models/model_package.pkl"
+    # Déterminer quel modèle utiliser
+    if selected_model:
+        # Modèle spécifique demandé
+        model_file = f"{selected_model}.pkl"
+        model_path = f"models/{model_file}"
 
-    if not os.path.exists(model_package_path):
-        print("ERREUR : Modele entraine introuvable !")
-        print(f"   Fichier attendu : {model_package_path}")
-        print("   Veuillez d'abord executer : python 2_train_models.py")
-        return None
+        if os.path.exists(model_path):
+            print(f"   Utilisation du modèle spécifique : {selected_model}")
+            try:
+                # Les modèles individuels sont sauvegardés avec joblib, pas pickle
+                individual_model = joblib.load(model_path)
 
-    try:
-        # Charger le package modèle complet avec l'imputer
-        with open(model_package_path, "rb") as f:
-            model_package = pickle.load(f)
+                # Pour les modèles individuels, on doit charger l'imputer séparément
+                model_package_path = "models/model_package.pkl"
+                if os.path.exists(model_package_path):
+                    with open(model_package_path, "rb") as f:
+                        model_package = pickle.load(f)
+                    imputer = model_package["imputer"]
+                    features = model_package["features"]
+                else:
+                    print(
+                        "ATTENTION : Package modèle complet introuvable, utilisation d'imputation basique"
+                    )
+                    imputer = {"columns_imputed": []}
+                    # Charger les features depuis le dataset d'entraînement enrichi
+                    train_enriched_path = "datasets/enriched_train.csv"
+                    if os.path.exists(train_enriched_path):
+                        train_df = pd.read_csv(train_enriched_path)
+                        exclude_cols = [
+                            "ID",
+                            "OS_YEARS",
+                            "OS_STATUS",
+                            "CENTER",
+                            "CYTOGENETICS",
+                        ]
+                        features = [
+                            col for col in train_df.columns if col not in exclude_cols
+                        ]
+                    else:
+                        features = []
 
-        best_model_dict = model_package["best_model"]
-        best_model_name = model_package["best_model_name"]
-        features = model_package["features"]
-        imputer = model_package["imputer"]  # Utiliser l'imputer du modèle
+                best_model = individual_model
+                best_model_name = selected_model
+                best_model_dict = {"model": individual_model}
 
-        # Extraire le modèle du dictionnaire
-        best_model = best_model_dict["model"]
+            except Exception as e:
+                print(
+                    f"ERREUR lors du chargement du modèle spécifique {selected_model}: {e}"
+                )
+                print(f"   Type d'erreur: {type(e).__name__}")
+                print(f"   Taille du fichier: {os.path.getsize(model_path)} bytes")
 
-        print("   Modele charge avec succes")
-        print(f"   Modele : {best_model_name}")
-        print(f"   Features : {len(features)}")
-        print("   Imputer d'entrainement charge")
+                # Essayer de lire les premiers bytes pour diagnostiquer
+                try:
+                    with open(model_path, "rb") as f:
+                        first_bytes = f.read(20)
+                    print(f"   Premiers bytes: {first_bytes}")
+                except:
+                    print("   Impossible de lire les premiers bytes")
 
-    except FileNotFoundError:
-        print("ERREUR : Fichier modele introuvable")
-        return None
-    except Exception as e:
-        print(f"ERREUR lors du chargement du modele : {e}")
-        return None
+                print(
+                    "   Le fichier modèle semble corrompu ou dans un format incompatible"
+                )
+                print("Retour au modèle par défaut...")
+                selected_model = None
+        else:
+            print(
+                f"ERREUR : Modèle spécifique {selected_model} introuvable dans {model_path}"
+            )
+            print("Modèles disponibles :")
+            if os.path.exists("models"):
+                for file in os.listdir("models"):
+                    if file.endswith(".pkl") and file != "model_package.pkl":
+                        print(f"   - {file[:-4]}")  # Enlever l'extension .pkl
+            print("Retour au modèle par défaut...")
+            selected_model = None
+
+    if not selected_model:
+        # Utiliser le modèle par défaut (meilleur modèle)
+        model_package_path = "models/model_package.pkl"
+
+        if not os.path.exists(model_package_path):
+            print("ERREUR : Modele entraine introuvable !")
+            print(f"   Fichier attendu : {model_package_path}")
+            print("   Veuillez d'abord executer : python 2_train_models.py")
+            return None
+
+        try:
+            # Charger le package modèle complet avec l'imputer
+            with open(model_package_path, "rb") as f:
+                model_package = pickle.load(f)
+
+            best_model_dict = model_package["best_model"]
+            best_model_name = model_package["best_model_name"]
+            features = model_package["features"]
+            imputer = model_package["imputer"]  # Utiliser l'imputer du modèle
+
+            # Extraire le modèle du dictionnaire
+            best_model = best_model_dict["model"]
+
+        except FileNotFoundError:
+            print("ERREUR : Fichier modele introuvable")
+            return None
+        except Exception as e:
+            print(f"ERREUR lors du chargement du modele : {e}")
+            return None
+
+    print("   Modele charge avec succes")
+    print(f"   Modele : {best_model_name}")
+    print(f"   Features : {len(features)}")
+    print("   Imputer d'entrainement charge")
 
     # 2. Chargement des données de test
     print("\n 2. Chargement des donnees de test...")
@@ -91,12 +173,10 @@ def predict_and_submit():
             imputer=imputer,  # Utiliser le vrai imputer d'entraînement
             advanced_imputation_method="medical",
             is_training=False,
+            save_to_file="datasets/enriched_test.csv",  # Sauvegarder automatiquement
         )
 
-        # Sauvegarde du dataset enrichi de test au format CSV
-        enriched_test_csv = "datasets/enriched_test.csv"
-        df_test_enriched.to_csv(enriched_test_csv, index=False)
-        print(f"   Dataset enrichi de test exporte : {enriched_test_csv}")
+        print(f"   Dataset enrichi de test sauvegarde : datasets/enriched_test.csv")
 
         # Préparer les features de test - utiliser la même logique que l'entraînement
         # Exclure les colonnes de métadonnées
@@ -171,7 +251,15 @@ def predict_and_submit():
     try:
         # Sauvegarder les prédictions
         timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-        submission_filename = f"submission_{best_model_name}_{timestamp}.csv"
+
+        # Tronquer le nom du modèle s'il est trop long pour éviter les erreurs Windows
+        model_name_for_file = best_model_name
+        if len(model_name_for_file) > 100:  # Limiter à 100 caractères
+            model_name_for_file = (
+                model_name_for_file[:50] + "..." + model_name_for_file[-47:]
+            )
+
+        submission_filename = f"submission_{model_name_for_file}_{timestamp}.csv"
         submission_path = f"submissions/{submission_filename}"
 
         submission_df.to_csv(submission_path, index=False)
@@ -187,7 +275,9 @@ def predict_and_submit():
         with open(summary_path, "w", encoding="utf-8") as f:
             f.write("=== RÉSUMÉ DES PRÉDICTIONS ===\n")
             f.write(f"Date de génération : {pd.Timestamp.now().isoformat()}\n")
-            f.write(f"Modèle utilisé : {best_model_name}\n")
+            f.write(
+                f"Modèle utilisé : {best_model_name}\n"
+            )  # Nom complet dans le résumé
             f.write(f"Nombre de prédictions : {len(submission_df)}\n")
             f.write(f"Fichier de soumission : {submission_filename}\n")
             f.write("\nDistribution des prédictions :\n")
@@ -254,4 +344,24 @@ Aperçu des données :
 
 
 if __name__ == "__main__":
-    predict_and_submit()
+    # Configuration des arguments en ligne de commande
+    parser = argparse.ArgumentParser(
+        description="Génère les prédictions avec un modèle spécifique"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Nom du modèle à utiliser (sans extension .pkl). "
+        "Ex: cox_alpha1.0_20250723_120432. "
+        "Si non spécifié, utilise le meilleur modèle.",
+    )
+
+    args = parser.parse_args()
+
+    if args.model:
+        print(f"Utilisation du modèle spécifique : {args.model}")
+    else:
+        print("Utilisation du meilleur modèle par défaut")
+
+    predict_and_submit(selected_model=args.model)

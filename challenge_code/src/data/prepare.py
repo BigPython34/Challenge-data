@@ -509,12 +509,23 @@ def prepare_enriched_dataset(
     imputer=None,
     advanced_imputation_method="medical",
     is_training=True,
+    save_to_file=None,
 ):
     """
     Version de compatibilité avec l'ancien pipeline
 
     Utilise le nouveau système d'imputation médicale par défaut,
     mais peut revenir à l'ancien système si nécessaire.
+
+    Parameters:
+    -----------
+    clinical_df : DataFrame des données cliniques
+    molecular_df : DataFrame des données moléculaires
+    target_df : DataFrame des targets (optionnel pour test)
+    imputer : Imputer pré-entraîné (pour test)
+    advanced_imputation_method : Méthode d'imputation
+    is_training : Mode entraînement ou test
+    save_to_file : Chemin pour sauvegarder le dataset préparé (optionnel)
     """
     if is_training:
         # Nouveau pipeline pour l'entraînement
@@ -553,6 +564,11 @@ def prepare_enriched_dataset(
             # Merger avec les targets
             final_df = enriched_df.merge(target_clean, on="ID", how="inner")
 
+            # Sauvegarder si demandé
+            if save_to_file:
+                print(f"   Sauvegarde du dataset enrichi vers : {save_to_file}")
+                final_df.to_csv(save_to_file, index=False)
+
             return final_df, imputation_metadata
         else:
             # Version sans target (pour compatibilité)
@@ -588,6 +604,11 @@ def prepare_enriched_dataset(
             if nan_count > 0:
                 enriched_df = enriched_df.fillna(0)
 
+            # Sauvegarder si demandé
+            if save_to_file:
+                print(f"   Sauvegarde du dataset enrichi vers : {save_to_file}")
+                enriched_df.to_csv(save_to_file, index=False)
+
             return enriched_df, imputation_metadata
     else:
         # Mode test - utiliser l'imputer fourni (compatibilité)
@@ -620,6 +641,11 @@ def prepare_enriched_dataset(
         for col in imputer.get("columns_imputed", []):
             if col in enriched_df.columns and enriched_df[col].isna().any():
                 enriched_df[col] = enriched_df[col].fillna(enriched_df[col].median())
+
+        # Sauvegarder si demandé
+        if save_to_file:
+            print(f"   Sauvegarde du dataset de test enrichi vers : {save_to_file}")
+            enriched_df.to_csv(save_to_file, index=False)
 
         return enriched_df
 

@@ -430,15 +430,11 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
     clinical_df["neutropenia_moderate"] = (clinical_df["ANC"] < 1.5).astype(int)
     clinical_df["neutropenia_severe"] = (clinical_df["ANC"] < 1.0).astype(int)
 
-    # Leucocytose (WBC > 30 = élevée, > 100 = très élevée)
+    # Leucocytose (WBC > 30 = élevée)
     clinical_df["leukocytosis_high"] = (clinical_df["WBC"] > 30).astype(int)
-    clinical_df["leukocytosis_very_high"] = (clinical_df["WBC"] > 100).astype(int)
 
-    # Blastose médullaire élevée (>20% = LMA, >10% = intermédiaire)
+    # Blastose médullaire élevée (>20% = LMA)
     clinical_df["high_blast_count"] = (clinical_df["BM_BLAST"] > 20).astype(int)
-    clinical_df["intermediate_blast_count"] = (
-        (clinical_df["BM_BLAST"] > 10) & (clinical_df["BM_BLAST"] <= 20)
-    ).astype(int)
 
     # ===== SCORES COMPOSITES CLINIQUES =====
 
@@ -460,11 +456,15 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
     # ===== TRANSFORMATIONS LOG (pour distributions asymétriques) =====
 
     # Log transformation pour les variables très asymétriques
-    for col in ["WBC", "PLT"]:
+    for col in ["WBC", "PLT", "ANC", "MONOCYTES"]:
         if col in clinical_df.columns:
-            clinical_df[f"log_{col}"] = np.log1p(
-                clinical_df[col]
-            )  # log(1+x) pour gérer les 0
+            clinical_df[f"log_{col}"] = np.log1p(clinical_df[col].fillna(0))
+
+    # ===== RATIOS ADDITIONNELS =====
+    clinical_df["blast_platelet_ratio"] = clinical_df["BM_BLAST"] / clinical_df["PLT"]
+
+    # Gérer les infinis
+    clinical_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     return clinical_df
 

@@ -89,8 +89,8 @@ PYCOX_DEEPSURV_PARAMS = {
     "batch_norm": True,
     "learning_rate": 0.001,  # Learning rate plus faible
     "batch_size": 128,  # Batch size plus petit pour plus de stabilite
-    "epochs": 2000,  # Epochs optimises
-    "patience": 400,  # Patience genereuse
+    "epochs": 100,  # Epochs optimises
+    "patience": 10,  # Patience genereuse
     "weight_decay": 0.005,  # Weight decay plus faible
     "optimizer": "Adam",
     "lr_scheduler": True,  # Scheduler de learning rate

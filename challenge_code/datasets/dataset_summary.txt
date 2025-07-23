@@ -1,9 +1,9 @@
 === RESUME DU DATASET D'ENTRAINEMENT ===
 
-Date de creation : 2025-07-22 17:56:40
+Date de creation : 2025-07-23 12:19:51
 Echantillons d'entrainement : 2496
 Echantillons de validation : 624
-Nombre de features : 76
+Nombre de features : 77
 
 Features disponibles :
   1. BM_BLAST
@@ -22,63 +22,64 @@ Features disponibles :
  14. neutropenia_moderate
  15. neutropenia_severe
  16. leukocytosis_high
- 17. leukocytosis_very_high
- 18. high_blast_count
- 19. intermediate_blast_count
- 20. cytopenia_score
- 21. pancytopenia
- 22. proliferation_score
- 23. log_WBC
- 24. log_PLT
- 25. mut_NPM1
- 26. mut_CEBPA
- 27. mut_TP53
- 28. mut_FLT3
- 29. mut_ASXL1
- 30. mut_RUNX1
- 31. mut_MECOM
- 32. mut_DNMT3A
- 33. mut_TET2
- 34. mut_IDH1
- 35. mut_IDH2
- 36. mut_SF3B1
- 37. mut_SRSF2
- 38. mut_U2AF1
- 39. mut_NRAS
- 40. mut_KRAS
- 41. mut_PTPN11
- 42. vaf_max_TP53
- 43. vaf_max_FLT3
- 44. vaf_max_NPM1
- 45. vaf_max_CEBPA
- 46. TP53_truncating
- 47. FLT3_high_VAF
- 48. NPM1_pos_FLT3_neg
- 49. DNMT3A_NPM1_comut
- 50. methylation_pathway_altered
- 51. splicing_pathway_altered
- 52. ras_pathway_altered
- 53. eln_molecular_risk
- 54. total_mutations
- 55. vaf_mean
- 56. vaf_median
- 57. vaf_max
- 58. vaf_std
- 59. high_vaf_mutations
- 60. high_vaf_ratio
- 61. t_8_21
- 62. inv_16
- 63. t_15_17
- 64. normal_karyotype
- 65. trisomy_8
- 66. complex_karyotype
- 67. monosomy_7
- 68. del_5q
- 69. abn_3q
- 70. abn_17p
- 71. t_6_9
- 72. eln_cyto_risk
- 73. num_cyto_abnormalities
- 74. eln_integrated_risk
- 75. mutation_burden_category
- 76. clinical_risk_score
+ 17. high_blast_count
+ 18. cytopenia_score
+ 19. pancytopenia
+ 20. proliferation_score
+ 21. log_WBC
+ 22. log_PLT
+ 23. log_ANC
+ 24. log_MONOCYTES
+ 25. blast_platelet_ratio
+ 26. mut_NPM1
+ 27. mut_CEBPA
+ 28. mut_TP53
+ 29. mut_FLT3
+ 30. mut_ASXL1
+ 31. mut_RUNX1
+ 32. mut_MECOM
+ 33. mut_DNMT3A
+ 34. mut_TET2
+ 35. mut_IDH1
+ 36. mut_IDH2
+ 37. mut_SF3B1
+ 38. mut_SRSF2
+ 39. mut_U2AF1
+ 40. mut_NRAS
+ 41. mut_KRAS
+ 42. mut_PTPN11
+ 43. vaf_max_TP53
+ 44. vaf_max_FLT3
+ 45. vaf_max_NPM1
+ 46. vaf_max_CEBPA
+ 47. TP53_truncating
+ 48. FLT3_high_VAF
+ 49. NPM1_pos_FLT3_neg
+ 50. DNMT3A_NPM1_comut
+ 51. methylation_pathway_altered
+ 52. splicing_pathway_altered
+ 53. ras_pathway_altered
+ 54. eln_molecular_risk
+ 55. total_mutations
+ 56. vaf_mean
+ 57. vaf_median
+ 58. vaf_max
+ 59. vaf_std
+ 60. high_vaf_mutations
+ 61. high_vaf_ratio
+ 62. t_8_21
+ 63. inv_16
+ 64. t_15_17
+ 65. normal_karyotype
+ 66. trisomy_8
+ 67. complex_karyotype
+ 68. monosomy_7
+ 69. del_5q
+ 70. abn_3q
+ 71. abn_17p
+ 72. t_6_9
+ 73. eln_cyto_risk
+ 74. num_cyto_abnormalities
+ 75. eln_integrated_risk
+ 76. mutation_burden_category
+ 77. clinical_risk_score
