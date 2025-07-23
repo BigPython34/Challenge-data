@@ -4,12 +4,7 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 
-try:
-    import shap
-
-    SHAP_AVAILABLE = True
-except ImportError:
-    SHAP_AVAILABLE = False
+import shap
 
 
 def plot_feature_importances(
@@ -57,10 +52,6 @@ def plot_correlation_matrix(df, figsize=(12, 8)):
 
 def plot_shap_analysis(model, X_train, X_test, max_samples=100):
     """Analyse SHAP pour l'explainabilite du modele"""
-    if not SHAP_AVAILABLE:
-        print("SHAP non disponible, analyse ignoree")
-        return None
-
     # Creer un background dataset
     background = X_train.sample(min(max_samples, len(X_train)))
 

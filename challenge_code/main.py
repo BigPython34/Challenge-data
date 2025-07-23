@@ -9,7 +9,7 @@ import subprocess
 import time
 
 
-def run_script(script_name, step_number, total_steps):
+def run_script(script_name, step_number, total_steps, selected_model=None):
     """Exécute un script Python et gère les erreurs"""
     print(f"\n{'='*70}")
     print(f" EXÉCUTION SCRIPT {step_number}/{total_steps} : {script_name}")
@@ -19,8 +19,11 @@ def run_script(script_name, step_number, total_steps):
 
     try:
         # Exécuter le script
+        cmd = [sys.executable, script_name]
+        if selected_model:
+            cmd += ["--model", selected_model]
         subprocess.run(
-            [sys.executable, script_name],
+            cmd,
             capture_output=False,
             check=True,
             cwd=os.getcwd(),
@@ -28,7 +31,6 @@ def run_script(script_name, step_number, total_steps):
 
         end_time = time.time()
         duration = end_time - start_time
-
         print(f"\n Script {script_name} terminé avec succès")
         print(f"  Durée d'exécution : {duration:.2f} secondes")
         return True
@@ -63,7 +65,7 @@ def check_prerequisites():
     return True
 
 
-def main():
+def main(selected_model=None):
     """Pipeline principal complet en 3 étapes"""
     print(" PIPELINE COMPLET DE MACHINE LEARNING ")
     print("=" * 70)
@@ -85,12 +87,12 @@ def main():
         return False
 
     # Étape 2 : Entraînement des modèles
-    if not run_script("2_train_models.py", 2, 3):
+    if not run_script("2_train_models.py", 2, 3, selected_model):
         print("\n ARRÊT DU PIPELINE - Échec étape 2")
         return False
 
     # Étape 3 : Prédictions finales
-    if not run_script("3_predict.py", 3, 3):
+    if not run_script("3_predict.py", 3, 3, selected_model):
         print("\n ARRÊT DU PIPELINE - Échec étape 3")
         return False
 
@@ -120,19 +122,19 @@ def run_step_1():
     return run_script("1_prepare_data.py", 1, 1)
 
 
-def run_step_2():
+def run_step_2(selected_model=None):
     """Exécute seulement l'étape 2 : Entraînement des modèles"""
     print("=== EXÉCUTION ÉTAPE 2 UNIQUEMENT ===")
-    return run_script("2_train_models.py", 1, 1)
+    return run_script("2_train_models.py", 1, 1, selected_model)
 
 
-def run_step_3():
+def run_step_3(selected_model=None):
     """Exécute seulement l'étape 3 : Prédictions finales"""
     print("=== EXÉCUTION ÉTAPE 3 UNIQUEMENT ===")
-    return run_script("3_predict.py", 1, 1)
+    return run_script("3_predict.py", 1, 1, selected_model)
 
 
-def run_from_step(step_number):
+def run_from_step(step_number, selected_model=None):
     """Exécute le pipeline à partir d'une étape donnée"""
     scripts = ["1_prepare_data.py", "2_train_models.py", "3_predict.py"]
 
@@ -145,7 +147,13 @@ def run_from_step(step_number):
     start_time = time.time()
 
     for i in range(step_number - 1, 3):
-        if not run_script(scripts[i], i + 1, 3):
+        if i == 1:
+            ok = run_script(scripts[i], i + 1, 3, selected_model)
+        elif i == 2:
+            ok = run_script(scripts[i], i + 1, 3, selected_model)
+        else:
+            ok = run_script(scripts[i], i + 1, 3)
+        if not ok:
             print(f"\n ARRÊT - Échec étape {i + 1}")
             return False
 
@@ -158,18 +166,25 @@ def run_from_step(step_number):
 
 
 if __name__ == "__main__":
-    # Vérifier les arguments de ligne de commande
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--step-1":
+    selected_model = None
+    args = sys.argv[1:]
+    if "--model" in args:
+        idx = args.index("--model")
+        if idx + 1 < len(args):
+            selected_model = args[idx + 1]
+            # Remove --model and its value from args for further parsing
+            del args[idx : idx + 2]
+    if len(args) > 0:
+        if args[0] == "--step-1":
             run_step_1()
-        elif sys.argv[1] == "--step-2":
-            run_step_2()
-        elif sys.argv[1] == "--step-3":
-            run_step_3()
-        elif sys.argv[1].startswith("--from-step-"):
-            step_num = int(sys.argv[1].split("-")[-1])
-            run_from_step(step_num)
-        elif sys.argv[1] == "--help":
+        elif args[0] == "--step-2":
+            run_step_2(selected_model)
+        elif args[0] == "--step-3":
+            run_step_3(selected_model)
+        elif args[0].startswith("--from-step-"):
+            step_num = int(args[0].split("-")[-1])
+            run_from_step(step_num, selected_model)
+        elif args[0] == "--help":
             print("Usage:")
             print("  python main.py                  # Pipeline complet (3 étapes)")
             print("  python main.py --step-1         # Étape 1 seulement (préparation)")
@@ -179,10 +194,13 @@ if __name__ == "__main__":
             print("  python main.py --step-3         # Étape 3 seulement (prédictions)")
             print("  python main.py --from-step-2    # À partir de l'étape 2")
             print("  python main.py --from-step-3    # À partir de l'étape 3")
+            print(
+                "  python main.py --model xgboost  # Choisir le modèle à entraîner/prédire"
+            )
             print("  python main.py --help           # Afficher cette aide")
         else:
-            print(f"Option inconnue: {sys.argv[1]}")
+            print(f"Option inconnue: {args[0]}")
             print("Utilisez --help pour voir les options disponibles")
     else:
         # Pipeline complet par défaut
-        main()
+        main(selected_model)
