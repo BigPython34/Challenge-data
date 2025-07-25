@@ -19,7 +19,7 @@ def train_and_save_models():
     print("Objectif : Entrainer et sauvegarder les modeles")
     print("=" * 60)
 
-    # 1. Vérification et chargement du dataset
+    # 1. Verification and loading of dataset
     print("\n 1. Chargement du dataset prepare...")
     dataset_path = "datasets/training_dataset.pkl"
 
@@ -41,7 +41,7 @@ def train_and_save_models():
         print(f"ERREUR lors du chargement : {e}")
         return None
 
-    # Extraire les données
+    # Extract the data
     X_train = dataset["X_train"]
     X_test = dataset["X_test"]
     y_train = dataset["y_train"]
@@ -51,7 +51,7 @@ def train_and_save_models():
     # 2. Configuration
     set_seed()
 
-    # 3. Entraînement des modèles
+    # 3. Model training
     print("\n 2. Entrainement des modeles...")
     print("   Entrainement en cours (cela peut prendre plusieurs minutes)...")
 
@@ -62,7 +62,7 @@ def train_and_save_models():
         print(f"ERREUR lors de l'entrainement : {e}")
         return None
 
-    # 4. Évaluation et sélection du meilleur modèle
+    # 4. Evaluation and selection of best model
     print("\n 3. Evaluation des modeles...")
 
     try:
@@ -81,22 +81,20 @@ def train_and_save_models():
         print(f"ERREUR lors de l'evaluation : {e}")
         return None
 
-    # 5. Sauvegarde du package modèle complet
+    # 5. Saving complete model package
     print("\n 4. Sauvegarde du package modele...")
 
-    # Créer le répertoire de modèles
+    # Create the models directory
     os.makedirs("models", exist_ok=True)
 
-    # Package modèle complet
+    # Complete model package
     model_package = {
         "best_model": models[best_model_name],
         "best_model_name": best_model_name,
         "all_models": models,
         "evaluation_results": results,
         "features": features,
-        "imputer": dataset["metadata"][
-            "imputer"
-        ],  # Récupérer l'imputer depuis les métadonnées
+        "imputer": dataset["metadata"].get("imputer", None),  # Get imputer if available
         "training_metadata": {
             "training_date": pd.Timestamp.now().isoformat(),
             "n_training_samples": len(X_train),
@@ -113,12 +111,12 @@ def train_and_save_models():
 
     print(f"   Package modele sauvegarde : {package_path}")
 
-    # Sauvegarder aussi le meilleur modèle seul (pour utilisation rapide)
+    # Also save the best model alone (for quick use)
     best_model_path = "models/best_model.joblib"
     joblib.dump(models[best_model_name], best_model_path)
     print(f"   Meilleur modele sauvegarde : {best_model_path}")
 
-    # Sauvegarder les métadonnées lisibles
+    # Save readable metadata
     metadata_path = "models/model_info.txt"
     with open(metadata_path, "w") as f:
         f.write("=== INFORMATIONS DU MODELE ENTRAINE ===\n")
@@ -139,7 +137,7 @@ def train_and_save_models():
         f"   Taille du package : {os.path.getsize(package_path) / 1024 / 1024:.2f} MB"
     )
 
-    # 6. Génération du rapport de visualisation
+    # 6. Generation of visualization report
     print("\n 5. Generation du rapport de visualisation...")
     try:
         create_visualization_report(models, results, X_test, y_test)

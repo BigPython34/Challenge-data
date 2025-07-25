@@ -47,18 +47,18 @@ def clean_and_validate_data(
     --------
     Tuple : DataFrames nettoyées
     """
-    print("=== NETTOYAGE ET VALIDATION DES DONNÉES ===")
+    print("=== DATA CLEANING AND VALIDATION ===")
 
-    # ===== NETTOYAGE TARGET (crucial pour survie) =====
+    # ===== TARGET CLEANING (crucial for survival) =====
 
-    # Supprimer les patients sans données de survie
+    # Remove patients without survival data
     target_clean = target_df.dropna(subset=["OS_YEARS", "OS_STATUS"]).copy()
 
-    # Valider les données de survie
+    # Validate survival data
     target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
     target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
 
-    # Supprimer les temps de survie négatifs ou nuls
+    # Remove negative or zero survival times
     invalid_survival = (target_clean["OS_YEARS"] <= 0) | target_clean["OS_YEARS"].isna()
     if invalid_survival.any():
         print(
@@ -67,15 +67,15 @@ def clean_and_validate_data(
         target_clean = target_clean[~invalid_survival]
 
     print(f"Target nettoye: {len(target_clean)} patients")
-    print(f"   - Taux de décès: {target_clean['OS_STATUS'].mean():.1%}")
-    print(f"   - Survie médiane: {target_clean['OS_YEARS'].median():.2f} ans")
+    print(f"   - Death rate: {target_clean['OS_STATUS'].mean():.1%}")
+    print(f"   - Median survival: {target_clean['OS_YEARS'].median():.2f} years")
 
-    # ===== NETTOYAGE CLINIQUE =====
+    # ===== CLINICAL CLEANING =====
 
-    # Garder seulement les patients avec données de survie
+    # Keep only patients with survival data
     clinical_clean = clinical_df[clinical_df["ID"].isin(target_clean["ID"])].copy()
 
-    # Valider les mesures cliniques
+    # Validate clinical measurements
     numeric_cols = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
     for col in numeric_cols:
         if col in clinical_clean.columns:
@@ -97,7 +97,7 @@ def clean_and_validate_data(
 
     print(f"Clinique nettoye: {len(clinical_clean)} patients")
 
-    # ===== NETTOYAGE MOLÉCULAIRE =====
+    # ===== MOLECULAR CLEANING =====
 
     # Garder seulement les patients avec données de survie
     molecular_clean = molecular_df[molecular_df["ID"].isin(target_clean["ID"])].copy()
@@ -155,7 +155,7 @@ def medical_imputation_strategy(
         f"   🏥 Imputation médicale pour {column} ({missing_mask.sum()} valeurs manquantes)"
     )
 
-    # ===== STRATÉGIES SPÉCIFIQUES PAR MESURE CLINIQUE =====
+    # ===== SPECIFIC STRATEGIES BY CLINICAL MEASURE =====
 
     if column == "BM_BLAST":
         # Blastes médullaires: utiliser la médiane, car distribution asymétrique

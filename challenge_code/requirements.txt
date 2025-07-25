@@ -8,15 +8,10 @@ joblib>=1.1.0
 optuna>=3.0.0
 shap>=0.41.0
 jupyter>=1.0.0
-# Nouvelles dépendances pour imputation avancée et DeepSurv
 torch>=1.13.0
 scipy>=1.8.0
-# Pour imputation avancée
 scikit-learn[extra]>=1.2.0
-# Pour visualisations améliorées
 plotly>=5.0.0
-# Pour performance
 numba>=0.56.0
-# Pour PyCox DeepSurv
 pycox>=0.2.3
 torchtuples>=0.2.2

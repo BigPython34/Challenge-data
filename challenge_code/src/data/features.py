@@ -1,211 +1,308 @@
 """
-Feature engineering pour la modélisation de survie en leucémie myéloïde aiguë (LMA)
+Feature engineering for acute myeloid leukemia (AML) survival modeling
 
-Ce module gère la création de features cliniquement pertinentes pour prédire
-la survie globale chez des patients atteints de LMA.
+This module handles the creation of clinically relevant features for predicting
+overall survival in AML patients.
 
-Principes directeurs:
-1. Features basées sur des connaissances médicales établies (ELN 2017, WHO)
-2. Simplicité et interprétabilité pour les cliniciens
-3. Robustesse aux données manquantes
-4. Pertinence pour la modélisation de survie
+Guiding principles:
+1. Features based on established medical knowledge (ELN 2022, WHO)
+2. Simplicity and interpretability for clinicians
+3. Robustness to missing data
+4. Relevance for survival modeling
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional
-import warnings
+import re
+from typing import Dict, List, Optional
+from ..config import (
+    CYTOGENETIC_FAVORABLE,
+    CYTOGENETIC_ADVERSE,
+    CYTOGENETIC_INTERMEDIATE,
+    ALL_IMPORTANT_GENES,
+    FAVORABLE_GENES,
+    ADVERSE_GENES,
+    INTERMEDIATE_GENES,
+    GENE_PATHWAYS,
+)
 
-from .. import config
 
-
-def extract_cytogenetic_risk_features(df: pd.DataFrame) -> pd.DataFrame:
+def extract_cytogenetic_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Extraction de features cytogénétiques basées sur la classification ELN 2017
+    Extract cytogenetic features based on ELN 2022 classification.
 
-    Créer des variables binaires pour les anomalies cytogénétiques les plus importantes
-    en pronostic de survie pour la LMA selon les guidelines européennes (ELN 2017).
+    This function extracts clinically relevant cytogenetic features including:
+    - Basic chromosome characteristics (count, sex chromosomes)
+    - ELN 2022 risk-specific abnormalities (favorable, intermediate, adverse)
+    - Cytogenetic complexity metrics
+    - Final ELN 2022 cytogenetic risk score
 
-    Parameters:
-    -----------
-    df : pd.DataFrame avec colonne CYTOGENETICS
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain the "CYTOGENETICS" column with karyotype information.
 
-    Returns:
-    --------
-    pd.DataFrame : Features cytogénétiques (index = patients)
+    Returns
+    -------
+    pd.DataFrame
+        Features indexed by patient ID with all cytogenetic characteristics.
     """
-    cyto_df = pd.DataFrame(index=df.index)
+    result_df = pd.DataFrame(index=df.index)
 
-    # Gestion des valeurs manquantes - considérées comme cytogénétique normale
-    cytogenetics_clean = df["CYTOGENETICS"].fillna("46,XX")  # Assume normal if missing
+    # Clean and prepare cytogenetics data
+    cytogenetics_raw = df["CYTOGENETICS"].fillna("46,XX")  # Default normal karyotype
+    cytogenetics_clean = cytogenetics_raw.str.strip()
 
-    # ===== ANOMALIES DE BON PRONOSTIC (Favorable) =====
+    # === BASIC CHROMOSOME CHARACTERISTICS ===
+    result_df = _extract_basic_chromosome_features(result_df, cytogenetics_clean)
 
-    # t(8;21)(q22;q22) - CBF-AML, bon pronostic
-    cyto_df["t_8_21"] = (
-        cytogenetics_clean.str.contains(r"t\(8;21\)", regex=True, na=False)
-    ).astype(int)
-
-    # inv(16)(p13.1q22) ou t(16;16)(p13.1;q22) - CBF-AML, bon pronostic
-    cyto_df["inv_16"] = (
-        cytogenetics_clean.str.contains(r"inv\(16\)|t\(16;16\)", regex=True, na=False)
-    ).astype(int)
-
-    # t(15;17) - LAM3, très bon pronostic (mais rare dans cette cohorte MDS/sAML)
-    cyto_df["t_15_17"] = (
-        cytogenetics_clean.str.contains(r"t\(15;17\)", regex=True, na=False)
-    ).astype(int)
-
-    # ===== ANOMALIES DE PRONOSTIC INTERMÉDIAIRE =====
-
-    # Cytogénétique normale (46,XX ou 46,XY)
-    cyto_df["normal_karyotype"] = (
-        cytogenetics_clean.str.match(r"^46,X[XY]$", na=False)
-    ).astype(int)
-
-    # Trisomie 8 - fréquente, pronostic intermédiaire
-    cyto_df["trisomy_8"] = (
-        cytogenetics_clean.str.contains(r"\+8\b", regex=True, na=False)
-    ).astype(int)
-
-    # ===== ANOMALIES DE PRONOSTIC DÉFAVORABLE (Adverse) =====
-
-    # Caryotype complexe (≥3 anomalies) - très mauvais pronostic
-    cyto_df["complex_karyotype"] = (cytogenetics_clean.str.count(",") >= 3).astype(int)
-
-    # Monosomie 7 / délétion 7q - très mauvais pronostic
-    cyto_df["monosomy_7"] = (
-        cytogenetics_clean.str.contains(r"-7\b|del\(7q\)|\b7q-", regex=True, na=False)
-    ).astype(int)
-
-    # Délétion 5q / monosomie 5 - mauvais pronostic, fréquent en MDS
-    cyto_df["del_5q"] = (
-        cytogenetics_clean.str.contains(r"del\(5q\)|\b5q-|-5\b", regex=True, na=False)
-    ).astype(int)
-
-    # Anomalies de 3q - mauvais pronostic
-    cyto_df["abn_3q"] = (
-        cytogenetics_clean.str.contains(r"inv\(3\)|t\(3;3\)", regex=True, na=False)
-    ).astype(int)
-
-    # Anomalies de 17p (incluant TP53) - très mauvais pronostic
-    cyto_df["abn_17p"] = (
-        cytogenetics_clean.str.contains(r"del\(17p\)|17p-|\(17;", regex=True, na=False)
-    ).astype(int)
-
-    # t(6;9) - mauvais pronostic
-    cyto_df["t_6_9"] = (
-        cytogenetics_clean.str.contains(r"t\(6;9\)", regex=True, na=False)
-    ).astype(int)
-
-    # ===== SCORES DE RISQUE CYTOGÉNÉTIQUE =====
-
-    # Score de risque ELN 2017 simplifié
-    cyto_df["eln_cyto_risk"] = 1  # Par défaut: intermédiaire
-
-    # Favorable (0)
-    favorable_mask = (
-        (cyto_df["t_8_21"] == 1) | (cyto_df["inv_16"] == 1) | (cyto_df["t_15_17"] == 1)
-    )
-    cyto_df.loc[favorable_mask, "eln_cyto_risk"] = 0
-
-    # Défavorable (2)
-    adverse_mask = (
-        (cyto_df["complex_karyotype"] == 1)
-        | (cyto_df["monosomy_7"] == 1)
-        | (cyto_df["del_5q"] == 1)
-        | (cyto_df["abn_3q"] == 1)
-        | (cyto_df["abn_17p"] == 1)
-        | (cyto_df["t_6_9"] == 1)
-    )
-    cyto_df.loc[adverse_mask, "eln_cyto_risk"] = 2
-
-    # Nombre total d'anomalies cytogénétiques (proxy de complexité)
-    cyto_df["num_cyto_abnormalities"] = cytogenetics_clean.str.count(",")
-    cyto_df["num_cyto_abnormalities"] = (
-        cyto_df["num_cyto_abnormalities"].fillna(0).astype(int)
+    # === ELN 2022 CYTOGENETIC ABNORMALITIES ===
+    result_df = _extract_eln2022_cytogenetic_abnormalities(
+        result_df, cytogenetics_clean
     )
 
-    return cyto_df
+    # === CYTOGENETIC COMPLEXITY METRICS ===
+    result_df = _extract_cytogenetic_complexity(result_df, cytogenetics_clean)
+
+    # === ELN 2022 FINAL RISK CLASSIFICATION ===
+    result_df = _calculate_eln2022_cytogenetic_risk(result_df)
+
+    return result_df
+
+
+def _extract_basic_chromosome_features(
+    result_df: pd.DataFrame, cytogenetics: pd.Series
+) -> pd.DataFrame:
+    """Extract basic chromosome count and sex chromosome information."""
+
+    # Chromosome count with validation
+    chromosome_count = cytogenetics.str.extract(r"(\d+)")[0]
+    chromosome_count = pd.to_numeric(chromosome_count, errors="coerce")
+
+    # Validate chromosome count (normal range 30-80, default to 46)
+    chromosome_count = chromosome_count.where(
+        (chromosome_count >= 30) & (chromosome_count <= 80), 46
+    )
+    result_df["chromosome_count"] = chromosome_count.fillna(46).astype(int)
+
+    # Sex chromosome determination: XX=0, XY=1, unknown/ambiguous=0.5
+    result_df["sex_chromosomes"] = 0.5  # Default for unknown
+    xx_mask = cytogenetics.str.contains(r"\bXX\b", case=False, na=False)
+    xy_mask = cytogenetics.str.contains(r"\bXY\b", case=False, na=False)
+
+    result_df.loc[xx_mask, "sex_chromosomes"] = 0
+    result_df.loc[xy_mask, "sex_chromosomes"] = 1
+
+    return result_df
+
+
+def _extract_eln2022_cytogenetic_abnormalities(
+    result_df: pd.DataFrame, cytogenetics: pd.Series
+) -> pd.DataFrame:
+    """Extract specific cytogenetic abnormalities according to ELN 2022 classification."""
+
+    def contains_pattern(pattern):
+        """Helper function to check if cytogenetics contains a specific pattern."""
+        return cytogenetics.str.contains(
+            pattern, case=False, regex=True, na=False
+        ).astype(int)
+
+    # === FAVORABLE ABNORMALITIES (ELN 2022) ===
+    result_df["t_8_21"] = contains_pattern(CYTOGENETIC_FAVORABLE[0])  # t(8;21)
+    result_df["inv_16"] = contains_pattern(CYTOGENETIC_FAVORABLE[1])  # inv(16)
+    result_df["t_16_16"] = contains_pattern(CYTOGENETIC_FAVORABLE[2])  # t(16;16)
+    result_df["t_15_17"] = contains_pattern(CYTOGENETIC_FAVORABLE[3])  # t(15;17)
+
+    # Combined favorable cytogenetics
+    result_df["any_favorable_cyto"] = result_df[
+        ["t_8_21", "inv_16", "t_16_16", "t_15_17"]
+    ].max(axis=1)
+
+    # === INTERMEDIATE ABNORMALITIES (ELN 2022) ===
+    result_df["normal_karyotype"] = cytogenetics.str.match(
+        CYTOGENETIC_INTERMEDIATE[0], na=False
+    ).astype(int)
+    result_df["trisomy_8"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[1])  # +8
+    result_df["t_9_11"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[2])  # t(9;11)
+    result_df["kmt2a_rearranged"] = contains_pattern(
+        CYTOGENETIC_INTERMEDIATE[3]
+    )  # 11q23
+
+    # === ADVERSE ABNORMALITIES (ELN 2022) ===
+    result_df["del_5q"] = contains_pattern(CYTOGENETIC_ADVERSE[0])  # -5/del(5q)
+    result_df["monosomy_7"] = contains_pattern(CYTOGENETIC_ADVERSE[1])  # -7/del(7q)
+    result_df["del_17p"] = contains_pattern(CYTOGENETIC_ADVERSE[2])  # del(17p)
+    result_df["abn_3q"] = contains_pattern(CYTOGENETIC_ADVERSE[3])  # inv(3)/t(3;3)
+    result_df["t_6_9"] = contains_pattern(CYTOGENETIC_ADVERSE[4])  # t(6;9)
+    result_df["t_9_22"] = contains_pattern(CYTOGENETIC_ADVERSE[5])  # t(9;22) BCR-ABL1
+
+    # Combined adverse cytogenetics (excluding complex karyotype)
+    adverse_abnormalities = [
+        "del_5q",
+        "monosomy_7",
+        "del_17p",
+        "abn_3q",
+        "t_6_9",
+        "t_9_22",
+    ]
+    result_df["any_adverse_cyto"] = result_df[adverse_abnormalities].max(axis=1)
+
+    return result_df
+
+
+def _extract_cytogenetic_complexity(
+    result_df: pd.DataFrame, cytogenetics: pd.Series
+) -> pd.DataFrame:
+    """Extract cytogenetic complexity metrics."""
+
+    # Count total abnormalities (comma-separated elements minus 1 for base karyotype)
+    result_df["num_cyto_abnormalities"] = (
+        cytogenetics.str.count(",").fillna(0).astype(int)
+    )
+
+    # Complex karyotype: ≥3 unrelated chromosome abnormalities (ELN 2022 definition)
+    result_df["complex_karyotype"] = (result_df["num_cyto_abnormalities"] >= 3).astype(
+        int
+    )
+
+    # Monosomal karyotype: ≥2 autosomal monosomies OR 1 autosomal monosomy + structural abnormalities
+    monosomy_patterns = [r"-\d+\b", r"monosomy"]  # Detect autosomal monosomies
+    result_df["monosomal_karyotype"] = 0
+    for pattern in monosomy_patterns:
+        monosomy_count = cytogenetics.str.count(pattern, flags=re.IGNORECASE)
+        result_df["monosomal_karyotype"] = np.maximum(
+            result_df["monosomal_karyotype"], (monosomy_count >= 2).astype(int)
+        )
+
+    return result_df
+
+
+def _calculate_eln2022_cytogenetic_risk(result_df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate final ELN 2022 cytogenetic risk score."""
+
+    # Initialize with intermediate risk (1)
+    result_df["eln_cyto_risk"] = 1
+
+    # Favorable risk (0): presence of any favorable abnormality
+    favorable_mask = result_df["any_favorable_cyto"] == 1
+    result_df.loc[favorable_mask, "eln_cyto_risk"] = 0
+
+    # Adverse risk (2): presence of any adverse abnormality OR complex karyotype
+    adverse_mask = (result_df["any_adverse_cyto"] == 1) | (
+        result_df["complex_karyotype"] == 1
+    )
+    result_df.loc[adverse_mask, "eln_cyto_risk"] = 2
+
+    return result_df
 
 
 def extract_molecular_risk_features(
     df: pd.DataFrame, maf_df: pd.DataFrame, important_genes: Optional[List[str]] = None
 ) -> pd.DataFrame:
     """
-    Création de features moléculaires basées sur les mutations prognostiques
+    Create molecular features based on ELN 2022 prognostic mutations.
 
-    Focus sur les gènes avec impact pronostique établi en LMA selon ELN 2017
-    et les découvertes récentes de la littérature.
+    This function creates comprehensive molecular features including:
+    - Binary mutation status for all important genes
+    - VAF-based features for key prognostic genes
+    - Mutation type classification (e.g., truncating vs missense)
+    - Clinically relevant co-mutation patterns
+    - Pathway-level alterations
+    - ELN 2022 molecular risk classification
 
-    Parameters:
-    -----------
-    df : pd.DataFrame avec colonnes patients (ID)
-    maf_df : pd.DataFrame avec mutations (ID, GENE, VAF, EFFECT)
-    important_genes : Liste des gènes à analyser (optionnel)
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Clinical data with patient IDs
+    maf_df : pd.DataFrame
+        Mutation data with columns: ID, GENE, VAF, EFFECT
+    important_genes : List[str], optional
+        Genes to analyze. If None, uses ALL_IMPORTANT_GENES from config
 
-    Returns:
-    --------
-    pd.DataFrame : Features moléculaires (index = ID patients)
+    Returns
+    -------
+    pd.DataFrame
+        Molecular features indexed by patient ID
     """
     if important_genes is None:
-        # Gènes avec impact pronostique établi en LMA
-        important_genes = [
-            # Bon pronostic
-            "NPM1",
-            "CEBPA",
-            # Mauvais pronostic
-            "TP53",
-            "FLT3",
-            "ASXL1",
-            "RUNX1",
-            "MECOM",
-            # Pronostic intermédiaire/émergent
-            "DNMT3A",
-            "TET2",
-            "IDH1",
-            "IDH2",
-            "SF3B1",
-            "SRSF2",
-            "U2AF1",
-            "NRAS",
-            "KRAS",
-            "PTPN11",
-        ]
+        important_genes = ALL_IMPORTANT_GENES
 
-    # DataFrame pour stocker les features par patient
+    # Initialize molecular features dataframe
     molecular_df = pd.DataFrame(index=df["ID"].unique())
 
-    # ===== MUTATIONS BINAIRES PAR GÈNE =====
+    # === BINARY MUTATION STATUS ===
+    molecular_df = _extract_binary_mutations(molecular_df, maf_df, important_genes)
+
+    # === VAF-BASED FEATURES ===
+    molecular_df = _extract_vaf_features(molecular_df, maf_df)
+
+    # === MUTATION TYPE CLASSIFICATION ===
+    molecular_df = _extract_mutation_types(molecular_df, maf_df)
+
+    # === CLINICALLY RELEVANT CO-MUTATIONS ===
+    molecular_df = _extract_comutation_patterns(molecular_df)
+
+    # === PATHWAY-LEVEL ALTERATIONS ===
+    molecular_df = _extract_pathway_alterations(molecular_df)
+
+    # === ELN 2022 MOLECULAR RISK CLASSIFICATION ===
+    molecular_df = _calculate_eln2022_molecular_risk(molecular_df)
+
+    return molecular_df.reset_index().rename(columns={"index": "ID"})
+
+
+def _extract_binary_mutations(
+    molecular_df: pd.DataFrame, maf_df: pd.DataFrame, important_genes: List[str]
+) -> pd.DataFrame:
+    """Extract binary mutation status for all important genes."""
 
     for gene in important_genes:
+        column_name = f"mut_{gene}"
         if gene in maf_df["GENE"].values:
             mutated_patients = maf_df[maf_df["GENE"] == gene]["ID"].unique()
-            molecular_df[f"mut_{gene}"] = molecular_df.index.isin(
+            molecular_df[column_name] = molecular_df.index.isin(
                 mutated_patients
             ).astype(int)
         else:
-            molecular_df[f"mut_{gene}"] = 0
+            molecular_df[column_name] = 0
 
-    # ===== VAF MAXIMALE PAR GÈNE (pour gènes clés) =====
+    return molecular_df
 
-    # Pour certains gènes, la VAF peut être prognostique
-    high_impact_genes = ["TP53", "FLT3", "NPM1", "CEBPA"]
 
-    for gene in high_impact_genes:
+def _extract_vaf_features(
+    molecular_df: pd.DataFrame, maf_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Extract VAF-based features for prognostically important genes."""
+
+    # Genes where VAF has prognostic significance
+    vaf_important_genes = ["TP53", "FLT3", "NPM1", "CEBPA", "DNMT3A"]
+
+    for gene in vaf_important_genes:
         if gene in maf_df["GENE"].values:
             gene_vaf = maf_df[maf_df["GENE"] == gene].groupby("ID")["VAF"].max()
             molecular_df[f"vaf_max_{gene}"] = molecular_df.index.map(gene_vaf).fillna(0)
+
+            # High VAF threshold (>0.5 suggests clonal mutation or potential germline)
+            molecular_df[f"{gene}_high_VAF"] = (
+                molecular_df[f"vaf_max_{gene}"] > 0.5
+            ).astype(int)
         else:
             molecular_df[f"vaf_max_{gene}"] = 0.0
+            molecular_df[f"{gene}_high_VAF"] = 0
 
-    # ===== TYPES DE MUTATIONS POUR GÈNES CLÉS =====
+    return molecular_df
 
-    # Pour TP53: les mutations non-sens/frameshift sont plus graves
+
+def _extract_mutation_types(
+    molecular_df: pd.DataFrame, maf_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Extract mutation type classifications for key genes."""
+
+    # TP53: Distinguish truncating (loss-of-function) from missense mutations
     if "TP53" in maf_df["GENE"].values:
         tp53_patients = maf_df[maf_df["GENE"] == "TP53"]
 
-        # Mutations tronquantes (loss-of-function)
+        # Truncating mutations (complete loss of function)
         truncating_effects = ["nonsense", "frameshift", "splice_site", "stop_gained"]
         tp53_truncating = tp53_patients[
             tp53_patients["EFFECT"].str.contains(
@@ -219,97 +316,134 @@ def extract_molecular_risk_features(
     else:
         molecular_df["TP53_truncating"] = 0
 
-    # Pour FLT3: distinction ITD vs TKD (si informations disponibles)
-    if "FLT3" in maf_df["GENE"].values:
-        flt3_patients = maf_df[maf_df["GENE"] == "FLT3"]
-
-        # FLT3-ITD souvent associé à VAF élevée
-        flt3_high_vaf = flt3_patients[flt3_patients["VAF"] > 0.5]["ID"].unique()
-        molecular_df["FLT3_high_VAF"] = molecular_df.index.isin(flt3_high_vaf).astype(
-            int
-        )
+    # CEBPA: Distinguish biallelic from monoallelic mutations (ELN 2022)
+    if "CEBPA" in maf_df["GENE"].values:
+        cebpa_counts = maf_df[maf_df["GENE"] == "CEBPA"]["ID"].value_counts()
+        biallelic_patients = cebpa_counts[cebpa_counts >= 2].index
+        molecular_df["CEBPA_biallelic"] = molecular_df.index.isin(
+            biallelic_patients
+        ).astype(int)
     else:
-        molecular_df["FLT3_high_VAF"] = 0
+        molecular_df["CEBPA_biallelic"] = 0
 
-    # ===== CO-MUTATIONS PROGNOSTIQUES =====
+    return molecular_df
 
-    # NPM1+/FLT3- : bon pronostic (si cytogénétique normale)
+
+def _extract_comutation_patterns(molecular_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract clinically relevant co-mutation patterns."""
+
+    # NPM1+/FLT3- : Favorable prognosis in CN-AML (ELN 2022)
     molecular_df["NPM1_pos_FLT3_neg"] = (
         (molecular_df.get("mut_NPM1", 0) == 1) & (molecular_df.get("mut_FLT3", 0) == 0)
     ).astype(int)
 
-    # TP53 + anomalies cytogénétiques complexes (synergie très défavorable)
-    # Cette information sera combinée plus tard avec les données cytogénétiques
+    # NPM1+/FLT3+ with low FLT3-ITD allelic ratio: Intermediate risk
+    molecular_df["NPM1_pos_FLT3_low"] = (
+        (molecular_df.get("mut_NPM1", 0) == 1)
+        & (molecular_df.get("mut_FLT3", 0) == 1)
+        & (molecular_df.get("FLT3_high_VAF", 0) == 0)
+    ).astype(int)
 
-    # DNMT3A + NPM1 + FLT3 : triple mutation fréquente
-    molecular_df["DNMT3A_NPM1_comut"] = (
+    # Triple mutation: DNMT3A + NPM1 + FLT3 (common pattern)
+    molecular_df["DNMT3A_NPM1_FLT3"] = (
         (molecular_df.get("mut_DNMT3A", 0) == 1)
         & (molecular_df.get("mut_NPM1", 0) == 1)
+        & (molecular_df.get("mut_FLT3", 0) == 1)
     ).astype(int)
 
-    # ===== VOIES DE SIGNALISATION ALTÉRÉES =====
+    # TP53 multi-hit: Multiple TP53 mutations (very adverse)
+    # This will be enhanced when we have copy number data
 
-    # Voie de méthylation de l'ADN (épigénétique)
-    methylation_genes = ["DNMT3A", "TET2", "IDH1", "IDH2"]
-    molecular_df["methylation_pathway_altered"] = (
-        molecular_df[
-            [
-                f"mut_{gene}"
-                for gene in methylation_genes
-                if f"mut_{gene}" in molecular_df.columns
-            ]
-        ].sum(axis=1)
-        > 0
-    ).astype(int)
+    return molecular_df
 
-    # Voie du splicing (spliceosome)
-    splicing_genes = ["SF3B1", "SRSF2", "U2AF1"]
-    molecular_df["splicing_pathway_altered"] = (
-        molecular_df[
-            [
-                f"mut_{gene}"
-                for gene in splicing_genes
-                if f"mut_{gene}" in molecular_df.columns
-            ]
-        ].sum(axis=1)
-        > 0
-    ).astype(int)
 
-    # Voie RAS (prolifération)
-    ras_genes = ["NRAS", "KRAS", "PTPN11"]
-    molecular_df["ras_pathway_altered"] = (
-        molecular_df[
-            [
-                f"mut_{gene}"
-                for gene in ras_genes
-                if f"mut_{gene}" in molecular_df.columns
-            ]
-        ].sum(axis=1)
-        > 0
-    ).astype(int)
+def _extract_pathway_alterations(molecular_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract pathway-level alteration features."""
 
-    # ===== SCORE DE RISQUE MOLÉCULAIRE ELN 2017 =====
+    for pathway_name, pathway_genes in GENE_PATHWAYS.items():
+        # Check if any gene in the pathway is mutated
+        pathway_columns = [
+            f"mut_{gene}"
+            for gene in pathway_genes
+            if f"mut_{gene}" in molecular_df.columns
+        ]
 
-    molecular_df["eln_molecular_risk"] = 1  # Par défaut: intermédiaire
+        if pathway_columns:
+            molecular_df[f"{pathway_name}_altered"] = (
+                molecular_df[pathway_columns].sum(axis=1) > 0
+            ).astype(int)
 
-    # Favorable (0)
-    favorable_molecular = (molecular_df.get("mut_NPM1", 0) == 1) & (
-        molecular_df.get("mut_FLT3", 0) == 0
-    ) | (  # NPM1+/FLT3-
-        molecular_df.get("mut_CEBPA", 0) == 1
-    )  # CEBPA biallelic (simplifié)
-    molecular_df.loc[favorable_molecular, "eln_molecular_risk"] = 0
+            # Count number of genes altered in pathway
+            molecular_df[f"{pathway_name}_count"] = molecular_df[pathway_columns].sum(
+                axis=1
+            )
+        else:
+            molecular_df[f"{pathway_name}_altered"] = 0
+            molecular_df[f"{pathway_name}_count"] = 0
 
-    # Défavorable (2)
-    adverse_molecular = (
-        (molecular_df.get("TP53_truncating", 0) == 1)
-        | (molecular_df.get("mut_ASXL1", 0) == 1)
-        | (molecular_df.get("mut_RUNX1", 0) == 1)
-        | (molecular_df.get("FLT3_high_VAF", 0) == 1)  # FLT3-ITD à VAF élevée
-    )
-    molecular_df.loc[adverse_molecular, "eln_molecular_risk"] = 2
+    return molecular_df
 
-    return molecular_df.reset_index().rename(columns={"index": "ID"})
+
+def _calculate_eln2022_molecular_risk(molecular_df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate ELN 2022 molecular risk classification."""
+
+    # Initialize with intermediate risk (1)
+    molecular_df["eln_molecular_risk"] = 1
+
+    # === FAVORABLE MOLECULAR FEATURES (0) ===
+    favorable_conditions = []
+
+    # NPM1 mutation without adverse-risk genetic lesions
+    if "mut_NPM1" in molecular_df.columns:
+        npm1_favorable = (molecular_df["mut_NPM1"] == 1) & (
+            molecular_df.get("mut_FLT3", 0) == 0
+        )  # No FLT3-ITD
+        favorable_conditions.append(npm1_favorable)
+
+    # Biallelic CEBPA mutations
+    if "CEBPA_biallelic" in molecular_df.columns:
+        favorable_conditions.append(molecular_df["CEBPA_biallelic"] == 1)
+
+    # Apply favorable classification
+    if favorable_conditions:
+        favorable_mask = pd.concat(favorable_conditions, axis=1).any(axis=1)
+        molecular_df.loc[favorable_mask, "eln_molecular_risk"] = 0
+
+    # === ADVERSE MOLECULAR FEATURES (2) ===
+    adverse_conditions = []
+
+    # TP53 mutations (especially truncating)
+    if "TP53_truncating" in molecular_df.columns:
+        adverse_conditions.append(molecular_df["TP53_truncating"] == 1)
+    elif "mut_TP53" in molecular_df.columns:
+        adverse_conditions.append(molecular_df["mut_TP53"] == 1)
+
+    # Other adverse genes from ELN 2022
+    adverse_genes_list = [
+        "ASXL1",
+        "RUNX1",
+        "BCOR",
+        "EZH2",
+        "SF3B1",
+        "SRSF2",
+        "STAG2",
+        "U2AF1",
+        "ZRSR2",
+    ]
+    for gene in adverse_genes_list:
+        if f"mut_{gene}" in molecular_df.columns:
+            adverse_conditions.append(molecular_df[f"mut_{gene}"] == 1)
+
+    # FLT3-ITD with high allelic ratio
+    if "FLT3_high_VAF" in molecular_df.columns:
+        adverse_conditions.append(molecular_df["FLT3_high_VAF"] == 1)
+
+    # Apply adverse classification
+    if adverse_conditions:
+        adverse_mask = pd.concat(adverse_conditions, axis=1).any(axis=1)
+        molecular_df.loc[adverse_mask, "eln_molecular_risk"] = 2
+
+    return molecular_df
 
 
 def create_molecular_burden_features(maf_df: pd.DataFrame) -> pd.DataFrame:
@@ -476,61 +610,100 @@ def combine_all_features(
     cyto_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Combiner toutes les features et créer des scores de risque intégrés
+    Combine all features and create integrated risk scores without data loss.
 
-    Parameters:
-    -----------
-    clinical_df, molecular_df, burden_df, cyto_df : DataFrames avec features
+    This function merges all feature categories and creates integrated scores
+    while preserving individual features to avoid information loss.
 
-    Returns:
-    --------
-    pd.DataFrame : Dataset final avec toutes les features
+    Parameters
+    ----------
+    clinical_df, molecular_df, burden_df, cyto_df : pd.DataFrame
+        Feature dataframes from different categories
+
+    Returns
+    -------
+    pd.DataFrame
+        Complete dataset with all features and integrated scores
     """
-    # Merger toutes les features sur l'ID patient
+    # Start with clinical data as base
     final_df = clinical_df.copy()
-
-    # S'assurer que tous les ID sont de même type
     final_df["ID"] = final_df["ID"].astype(str)
+
+    # === MERGE ALL FEATURE CATEGORIES ===
+    final_df = _merge_feature_dataframes(final_df, molecular_df, burden_df, cyto_df)
+
+    # === FILL MISSING VALUES STRATEGICALLY ===
+    final_df = _fill_missing_values_strategically(final_df)
+
+    # === CREATE INTEGRATED SCORES (PRESERVING INDIVIDUAL COMPONENTS) ===
+    final_df = _create_integrated_risk_scores(final_df)
+
+    # === ADD INTERACTION FEATURES ===
+    final_df = _create_interaction_features(final_df)
+
+    return final_df
+
+
+def _merge_feature_dataframes(
+    final_df: pd.DataFrame,
+    molecular_df: pd.DataFrame,
+    burden_df: pd.DataFrame,
+    cyto_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge all feature dataframes with proper handling of missing data."""
 
     # Merge molecular features
     if not molecular_df.empty:
         molecular_df["ID"] = molecular_df["ID"].astype(str)
         final_df = final_df.merge(molecular_df, on="ID", how="left")
 
-    # Merge burden features
+    # Merge mutation burden features
     if not burden_df.empty:
         burden_df["ID"] = burden_df["ID"].astype(str)
         final_df = final_df.merge(burden_df, on="ID", how="left")
 
-        # Fill NaN pour les patients sans mutations
-        mutation_cols = [
-            "total_mutations",
-            "high_vaf_mutations",
-            "vaf_mean",
-            "vaf_median",
-            "vaf_max",
-            "vaf_std",
-            "high_vaf_ratio",
-        ]
-        for col in mutation_cols:
-            if col in final_df.columns:
-                final_df[col] = final_df[col].fillna(0)
-
     # Merge cytogenetic features
     if not cyto_df.empty:
         cyto_df_reset = cyto_df.reset_index()
-        # S'assurer que la colonne ID existe et est du bon type
         if "index" in cyto_df_reset.columns:
             cyto_df_reset = cyto_df_reset.rename(columns={"index": "ID"})
         cyto_df_reset["ID"] = cyto_df_reset["ID"].astype(str)
         final_df = final_df.merge(cyto_df_reset, on="ID", how="left")
 
-    # Fill NaN pour features cytogénétiques (= normal si manquant)
-    cyto_cols = [
+    return final_df
+
+
+def _fill_missing_values_strategically(final_df: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing values based on clinical knowledge and data characteristics."""
+
+    # === MUTATION-RELATED FEATURES ===
+    # Missing mutations = no mutation detected
+    mutation_cols = [col for col in final_df.columns if col.startswith("mut_")]
+    for col in mutation_cols:
+        final_df[col] = final_df[col].fillna(0).astype(int)
+
+    # Missing mutation burden = no mutations
+    burden_cols = [
+        "total_mutations",
+        "high_vaf_mutations",
+        "vaf_mean",
+        "vaf_median",
+        "vaf_max",
+        "vaf_std",
+        "high_vaf_ratio",
+    ]
+    for col in burden_cols:
+        if col in final_df.columns:
+            final_df[col] = final_df[col].fillna(0)
+
+    # === CYTOGENETIC FEATURES ===
+    # Missing cytogenetic abnormalities = normal/not detected
+    cyto_binary_cols = [
         col
         for col in final_df.columns
-        if col.startswith(
-            (
+        if any(
+            col.startswith(prefix)
+            for prefix in [
                 "t_",
                 "inv_",
                 "del_",
@@ -539,211 +712,351 @@ def combine_all_features(
                 "trisomy_",
                 "abn_",
                 "monosomy_",
-            )
+                "any_",
+            ]
         )
     ]
-    for col in cyto_cols:
+    for col in cyto_binary_cols:
         final_df[col] = final_df[col].fillna(0).astype(int)
 
+    # Cytogenetic risk: missing = intermediate (most conservative)
     if "eln_cyto_risk" in final_df.columns:
-        final_df["eln_cyto_risk"] = final_df["eln_cyto_risk"].fillna(
-            1
-        )  # Intermédiaire si manquant
+        final_df["eln_cyto_risk"] = final_df["eln_cyto_risk"].fillna(1)
 
-    # ===== SCORES DE RISQUE INTÉGRÉS =====
+    # === PATHWAY FEATURES ===
+    # Missing pathway alterations = no alteration
+    pathway_cols = [
+        col for col in final_df.columns if "_altered" in col or "_count" in col
+    ]
+    for col in pathway_cols:
+        final_df[col] = final_df[col].fillna(0).astype(int)
 
-    # Score ELN 2017 combiné (cytogénétique + moléculaire)
+    # === VAF FEATURES ===
+    # Missing VAF = 0 (no mutation)
+    vaf_cols = [col for col in final_df.columns if "vaf_" in col.lower()]
+    for col in vaf_cols:
+        final_df[col] = final_df[col].fillna(0)
+
+    return final_df
+
+
+def _create_integrated_risk_scores(final_df: pd.DataFrame) -> pd.DataFrame:
+    """Create integrated risk scores while preserving individual components."""
+
+    # === ELN 2022 INTEGRATED RISK ===
+    # Start with cytogenetic risk
     final_df["eln_integrated_risk"] = final_df.get("eln_cyto_risk", 1)
 
-    # Ajuster selon le risque moléculaire
-    if "eln_molecular_risk" in final_df.columns:
-        # Si cytogénétique normale, utiliser le risque moléculaire
-        normal_cyto_mask = final_df.get("normal_karyotype", 0) == 1
+    # For normal cytogenetics, use molecular risk
+    if (
+        "eln_molecular_risk" in final_df.columns
+        and "normal_karyotype" in final_df.columns
+    ):
+        normal_cyto_mask = final_df["normal_karyotype"] == 1
         final_df.loc[normal_cyto_mask, "eln_integrated_risk"] = final_df.loc[
             normal_cyto_mask, "eln_molecular_risk"
         ]
 
-        # Pour les autres, prendre le plus mauvais des deux
-        final_df["eln_integrated_risk"] = np.maximum(
-            final_df["eln_integrated_risk"], final_df["eln_molecular_risk"]
+        # For other cases, take the worse of cytogenetic and molecular risk
+        other_mask = ~normal_cyto_mask
+        final_df.loc[other_mask, "eln_integrated_risk"] = np.maximum(
+            final_df.loc[other_mask, "eln_integrated_risk"],
+            final_df.loc[other_mask, "eln_molecular_risk"],
         )
 
-    # Score de charge mutationnelle (normalized)
+    # === MUTATION BURDEN RISK SCORE ===
     if "total_mutations" in final_df.columns:
-        # Catégoriser le nombre de mutations (0: faible, 1: intermédiaire, 2: élevé)
+        # Create continuous mutation burden score (normalized)
+        final_df["mutation_burden_score"] = (
+            final_df["total_mutations"] / final_df["total_mutations"].max()
+        )
+
+        # Create categorical mutation burden (for interpretability)
         final_df["mutation_burden_category"] = pd.cut(
             final_df["total_mutations"], bins=[-np.inf, 2, 5, np.inf], labels=[0, 1, 2]
         ).astype(int)
 
-    # Score clinique intégré
+    # === CLINICAL COMPOSITE SCORES ===
     final_df["clinical_risk_score"] = final_df.get("cytopenia_score", 0) + final_df.get(
         "proliferation_score", 0
     )
+
+    # === COMPREHENSIVE RISK SCORE ===
+    # Combine all risk dimensions with weights based on clinical evidence
+    risk_components = []
+
+    if "eln_integrated_risk" in final_df.columns:
+        risk_components.append(final_df["eln_integrated_risk"] * 0.4)  # 40% weight
+
+    if "clinical_risk_score" in final_df.columns:
+        # Normalize clinical score (0-1 scale)
+        clinical_normalized = (
+            final_df["clinical_risk_score"] / final_df["clinical_risk_score"].max()
+        )
+        risk_components.append(clinical_normalized * 0.3)  # 30% weight
+
+    if "mutation_burden_score" in final_df.columns:
+        risk_components.append(final_df["mutation_burden_score"] * 0.3)  # 30% weight
+
+    if risk_components:
+        final_df["comprehensive_risk_score"] = sum(risk_components)
+
+    return final_df
+
+
+def _create_interaction_features(final_df: pd.DataFrame) -> pd.DataFrame:
+    """Create clinically relevant interaction features."""
+
+    # === TP53 + COMPLEX CYTOGENETICS ===
+    # Very high-risk combination
+    if "mut_TP53" in final_df.columns and "complex_karyotype" in final_df.columns:
+        final_df["TP53_complex_cyto"] = (
+            (final_df["mut_TP53"] == 1) & (final_df["complex_karyotype"] == 1)
+        ).astype(int)
+
+    # === FLT3 + NPM1 INTERACTIONS ===
+    # Different risk levels based on combination
+    if "mut_FLT3" in final_df.columns and "mut_NPM1" in final_df.columns:
+        final_df["FLT3_NPM1_interaction"] = 0  # Default: neither
+
+        # NPM1+/FLT3- = favorable (1)
+        npm1_only = (final_df["mut_NPM1"] == 1) & (final_df["mut_FLT3"] == 0)
+        final_df.loc[npm1_only, "FLT3_NPM1_interaction"] = 1
+
+        # NPM1+/FLT3+ = intermediate (2)
+        both_mut = (final_df["mut_NPM1"] == 1) & (final_df["mut_FLT3"] == 1)
+        final_df.loc[both_mut, "FLT3_NPM1_interaction"] = 2
+
+        # NPM1-/FLT3+ = adverse (3)
+        flt3_only = (final_df["mut_NPM1"] == 0) & (final_df["mut_FLT3"] == 1)
+        final_df.loc[flt3_only, "FLT3_NPM1_interaction"] = 3
+
+    # === AGE + MOLECULAR INTERACTIONS ===
+    # Age modifies molecular risk impact
+    if "mut_DNMT3A" in final_df.columns and final_df["AGE"].notna().any():
+        # DNMT3A mutations have different impact in older vs younger patients
+        final_df["DNMT3A_age_interaction"] = final_df["mut_DNMT3A"] * (
+            final_df["AGE"] > 60
+        ).astype(int)
 
     return final_df
 
 
 def get_clean_feature_lists() -> Dict[str, List[str]]:
     """
-    Retourner les listes de features organisées par catégorie
+    Return organized feature lists by category based on ELN 2022 classification.
 
-    Version nettoyée avec seulement les features cliniquement pertinentes
+    This function provides a comprehensive categorization of all features
+    for easy selection and model building.
 
-    Returns:
-    --------
-    Dict : Features organisées par catégorie
+    Returns
+    -------
+    Dict[str, List[str]]
+        Features organized by clinical category and data type
     """
 
-    # Features cliniques de base (mesures objectives)
+    # === CLINICAL FEATURES ===
     clinical_base = [
-        "BM_BLAST",  # % de blastes médullaires
-        "WBC",
-        "ANC",  # Globules blancs et neutrophiles
-        "MONOCYTES",  # Monocytes
-        "HB",
-        "PLT",  # Hémoglobine et plaquettes
+        "BM_BLAST",  # Bone marrow blast percentage
+        "WBC",  # White blood cell count
+        "ANC",  # Absolute neutrophil count
+        "MONOCYTES",  # Monocyte count
+        "HB",  # Hemoglobin level
+        "PLT",  # Platelet count
+        "AGE",  # Patient age
     ]
 
-    # Ratios cliniques (normalisés, robustes)
     clinical_ratios = [
-        "neutrophil_ratio",  # ANC/WBC
-        "monocyte_ratio",  # MONO/WBC
-        "platelet_wbc_ratio",  # PLT/WBC
+        "neutrophil_ratio",  # ANC/WBC ratio
+        "monocyte_ratio",  # MONOCYTES/WBC ratio
+        "platelet_wbc_ratio",  # PLT/WBC ratio
+        "blast_platelet_ratio",  # BM_BLAST/PLT ratio
     ]
 
-    # Features cliniques binaires (seuils établis)
     clinical_binary = [
-        "anemia_severe",  # HB < 8
-        "thrombocytopenia_severe",  # PLT < 50
-        "neutropenia_severe",  # ANC < 1.0
-        "leukocytosis_high",  # WBC > 30
-        "high_blast_count",  # Blastes > 20%
+        "anemia_severe",  # HB < 8 g/dL
+        "thrombocytopenia_severe",  # PLT < 50 K/μL
+        "neutropenia_severe",  # ANC < 1.0 K/μL
+        "leukocytosis_high",  # WBC > 30 K/μL
+        "high_blast_count",  # BM_BLAST > 20%
+        "pancytopenia",  # All lineages affected
     ]
 
-    # Scores cliniques composites
     clinical_scores = [
-        "cytopenia_score",  # 0-3, nombre de cytopénies
-        "pancytopenia",  # Toutes lignées affectées
-        "proliferation_score",  # Blastose + leucocytose
+        "cytopenia_score",  # 0-3, number of cytopenias
+        "proliferation_score",  # Blast + leukocytosis score
+        "clinical_risk_score",  # Composite clinical risk
     ]
 
-    # Features cytogénétiques (ELN 2017)
-    cytogenetic = [
+    # === CYTOGENETIC FEATURES (ELN 2022) ===
+    cytogenetic_basic = [
+        "chromosome_count",  # Total chromosome number
+        "sex_chromosomes",  # XX=0, XY=1, unknown=0.5
+        "num_cyto_abnormalities",  # Number of cytogenetic changes
+    ]
+
+    cytogenetic_favorable = [
+        "t_8_21",  # t(8;21)(q22;q22.1)
+        "inv_16",  # inv(16)(p13.1q22)
+        "t_16_16",  # t(16;16)(p13.1;q22)
+        "t_15_17",  # t(15;17)(q24;q21.2)
+        "any_favorable_cyto",  # Any favorable abnormality
+    ]
+
+    cytogenetic_intermediate = [
         "normal_karyotype",  # 46,XX/XY
-        "t_8_21",
-        "inv_16",  # Favorable
-        "complex_karyotype",
-        "monosomy_7",
-        "del_5q",
-        "abn_3q",
-        "abn_17p",  # Adverse
-        "eln_cyto_risk",  # Score 0-2
+        "trisomy_8",  # +8
+        "t_9_11",  # t(9;11)(p21.3;q23.3)
+        "kmt2a_rearranged",  # Other 11q23/KMT2A
     ]
 
-    # Mutations des gènes clés (binaire)
-    molecular_mutations = [
-        # Bon pronostic
-        "mut_NPM1",
-        "mut_CEBPA",
-        # Mauvais pronostic
-        "mut_TP53",
-        "mut_FLT3",
-        "mut_ASXL1",
-        "mut_RUNX1",
-        # Épigénétique
-        "mut_DNMT3A",
-        "mut_TET2",
-        "mut_IDH1",
-        "mut_IDH2",
-        # Splicing
-        "mut_SF3B1",
-        "mut_SRSF2",
-        "mut_U2AF1",
+    cytogenetic_adverse = [
+        "del_5q",  # -5/del(5q)
+        "monosomy_7",  # -7/del(7q)
+        "del_17p",  # del(17p)/i(17q)
+        "abn_3q",  # inv(3)/t(3;3)
+        "t_6_9",  # t(6;9)(p23;q34.1)
+        "t_9_22",  # t(9;22)(q34.1;q11.2)
+        "complex_karyotype",  # ≥3 unrelated abnormalities
+        "monosomal_karyotype",  # Monosomal karyotype
+        "any_adverse_cyto",  # Any adverse abnormality
     ]
 
-    # Features moléculaires dérivées
-    molecular_derived = [
-        "NPM1_pos_FLT3_neg",  # Co-mutation favorable
-        "TP53_truncating",  # Mutations loss-of-function TP53
-        "methylation_pathway_altered",  # Voie épigénétique
-        "splicing_pathway_altered",  # Voie splicing
-        "eln_molecular_risk",  # Score ELN moléculaire
+    cytogenetic_risk = [
+        "eln_cyto_risk",  # ELN 2022 cytogenetic risk (0-2)
     ]
 
-    # Charge mutationnelle
+    # === MOLECULAR FEATURES (ELN 2022) ===
+    molecular_favorable = [
+        "mut_NPM1",  # NPM1 mutations
+        "mut_CEBPA",  # CEBPA mutations
+        "CEBPA_biallelic",  # Biallelic CEBPA
+    ]
+
+    molecular_intermediate = [
+        "mut_FLT3",  # FLT3 mutations
+        "mut_DNMT3A",  # DNMT3A mutations
+        "mut_TET2",  # TET2 mutations
+        "mut_IDH1",  # IDH1 mutations
+        "mut_IDH2",  # IDH2 mutations
+        "mut_KIT",  # KIT mutations
+    ]
+
+    molecular_adverse = [
+        "mut_TP53",  # TP53 mutations
+        "mut_ASXL1",  # ASXL1 mutations
+        "mut_RUNX1",  # RUNX1 mutations
+        "mut_BCOR",  # BCOR mutations
+        "mut_EZH2",  # EZH2 mutations
+        "mut_SF3B1",  # SF3B1 mutations
+        "mut_SRSF2",  # SRSF2 mutations
+        "mut_STAG2",  # STAG2 mutations
+        "mut_U2AF1",  # U2AF1 mutations
+        "mut_ZRSR2",  # ZRSR2 mutations
+    ]
+
+    molecular_ras = [
+        "mut_NRAS",  # NRAS mutations
+        "mut_KRAS",  # KRAS mutations
+        "mut_PTPN11",  # PTPN11 mutations
+    ]
+
+    # === MOLECULAR DERIVED FEATURES ===
+    molecular_vaf = [
+        "vaf_max_TP53",
+        "TP53_high_VAF",
+        "vaf_max_FLT3",
+        "FLT3_high_VAF",
+        "vaf_max_NPM1",
+        "NPM1_high_VAF",
+        "vaf_max_CEBPA",
+        "CEBPA_high_VAF",
+        "vaf_max_DNMT3A",
+        "DNMT3A_high_VAF",
+    ]
+
+    molecular_types = [
+        "TP53_truncating",  # TP53 loss-of-function
+        "CEBPA_biallelic",  # Biallelic CEBPA
+    ]
+
+    molecular_comutations = [
+        "NPM1_pos_FLT3_neg",  # NPM1+/FLT3- (favorable)
+        "NPM1_pos_FLT3_low",  # NPM1+/FLT3+ low ratio
+        "DNMT3A_NPM1_FLT3",  # Triple mutation
+    ]
+
+    # === PATHWAY FEATURES ===
+    pathway_features = [
+        "DNA_methylation_altered",
+        "DNA_methylation_count",
+        "RNA_splicing_altered",
+        "RNA_splicing_count",
+        "Chromatin_modification_altered",
+        "Chromatin_modification_count",
+        "Transcription_factors_altered",
+        "Transcription_factors_count",
+        "Tumor_suppressor_altered",
+        "Tumor_suppressor_count",
+        "Tyrosine_kinase_altered",
+        "Tyrosine_kinase_count",
+        "RAS_signaling_altered",
+        "RAS_signaling_count",
+        "Cohesin_complex_altered",
+        "Cohesin_complex_count",
+    ]
+
+    # === MUTATION BURDEN ===
     mutation_burden = [
-        "total_mutations",  # Nombre total
+        "total_mutations",  # Total mutation count
         "vaf_mean",
-        "vaf_max",  # Statistiques VAF
-        "high_vaf_ratio",  # Proportion VAF > 0.4
-        "mutation_burden_category",  # Catégorie 0-2
+        "vaf_median",
+        "vaf_max",
+        "vaf_std",  # VAF statistics
+        "high_vaf_mutations",  # High VAF mutation count
+        "high_vaf_ratio",  # High VAF proportion
+        "mutation_burden_score",  # Continuous burden score
+        "mutation_burden_category",  # Categorical burden (0-2)
     ]
 
-    # Scores intégrés
-    integrated_scores = [
-        "eln_integrated_risk",  # ELN 2017 complet
-        "clinical_risk_score",  # Score clinique composite
+    # === INTEGRATED RISK SCORES ===
+    risk_scores = [
+        "eln_molecular_risk",  # ELN 2022 molecular risk (0-2)
+        "eln_integrated_risk",  # ELN 2022 combined risk (0-2)
+        "comprehensive_risk_score",  # Multi-dimensional risk
+    ]
+
+    # === INTERACTION FEATURES ===
+    interaction_features = [
+        "TP53_complex_cyto",  # TP53 + complex karyotype
+        "FLT3_NPM1_interaction",  # FLT3/NPM1 combinations
+        "DNMT3A_age_interaction",  # DNMT3A × age interaction
     ]
 
     return {
+        # Clinical features
         "clinical_base": clinical_base,
         "clinical_ratios": clinical_ratios,
         "clinical_binary": clinical_binary,
         "clinical_scores": clinical_scores,
-        "cytogenetic": cytogenetic,
-        "molecular_mutations": molecular_mutations,
-        "molecular_derived": molecular_derived,
+        # Cytogenetic features (ELN 2022)
+        "cytogenetic_basic": cytogenetic_basic,
+        "cytogenetic_favorable": cytogenetic_favorable,
+        "cytogenetic_intermediate": cytogenetic_intermediate,
+        "cytogenetic_adverse": cytogenetic_adverse,
+        "cytogenetic_risk": cytogenetic_risk,
+        # Molecular features (ELN 2022)
+        "molecular_favorable": molecular_favorable,
+        "molecular_intermediate": molecular_intermediate,
+        "molecular_adverse": molecular_adverse,
+        "molecular_ras": molecular_ras,
+        "molecular_vaf": molecular_vaf,
+        "molecular_types": molecular_types,
+        "molecular_comutations": molecular_comutations,
+        # Pathway and burden features
+        "pathway_features": pathway_features,
         "mutation_burden": mutation_burden,
-        "integrated_scores": integrated_scores,
+        # Integrated scores
+        "risk_scores": risk_scores,
+        "interaction_features": interaction_features,
     }
-
-
-# ===== COMPATIBILITÉ AVEC L'ANCIEN CODE =====
-
-
-# Fonctions de compatibilité pour maintenir l'interface existante
-def get_feature_lists():
-    """Version de compatibilité avec l'ancien code"""
-    new_lists = get_clean_feature_lists()
-
-    # Mapping vers l'ancien format
-    return {
-        "clinical": new_lists["clinical_base"] + new_lists["clinical_ratios"],
-        "gene_mutations": new_lists["molecular_mutations"],
-        "statistics": new_lists["mutation_burden"][:4],  # vaf_mean, vaf_max, etc.
-        "cytogenetic": new_lists["cytogenetic"][:-1],  # sans eln_cyto_risk
-        "ratios": new_lists["clinical_ratios"],
-        "clinical_scores": new_lists["clinical_scores"],
-    }
-
-
-def extract_advanced_cytogenetic_features(df):
-    """Version de compatibilité avec l'ancien code"""
-    return extract_cytogenetic_risk_features(df)
-
-
-def create_advanced_molecular_features(df, maf_df, important_genes=None):
-    """Version de compatibilité avec l'ancien code"""
-    return extract_molecular_risk_features(df, maf_df, important_genes)
-
-
-def create_molecular_stats_features(maf_df):
-    """Version de compatibilité avec l'ancien code"""
-    burden_df = create_molecular_burden_features(maf_df)
-
-    # Reformater pour correspondre à l'ancien format
-    mutation_counts = burden_df[["ID", "total_mutations"]].rename(
-        columns={"total_mutations": "Nmut"}
-    )
-
-    vaf_stats = burden_df[["ID", "vaf_mean", "vaf_max", "vaf_std"]].copy()
-    vaf_stats["vaf_min"] = 0  # Approximation
-
-    effect_counts = pd.DataFrame()  # Placeholder, non utilisé dans le nouveau code
-
-    return mutation_counts, vaf_stats, effect_counts
-
-
-def create_advanced_clinical_features(df):
-    """Version de compatibilité avec l'ancien code"""
-    return create_clinical_features(df)

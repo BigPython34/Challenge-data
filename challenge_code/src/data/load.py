@@ -1,31 +1,31 @@
-# Fonctions de chargement des donnees
+# Data loading functions
 import pandas as pd
 from .. import config
 
 
 def load_clinical_data(path=None, train=True):
-    """Charge les donnees cliniques"""
+    """Load clinical data"""
     if path is None:
         path = config.CLINICAL_TRAIN_PATH if train else config.CLINICAL_TEST_PATH
     return pd.read_csv(path)
 
 
 def load_molecular_data(path=None, train=True):
-    """Charge les donnees moleculaires"""
+    """Load molecular data"""
     if path is None:
         path = config.MOLECULAR_TRAIN_PATH if train else config.MOLECULAR_TEST_PATH
     return pd.read_csv(path)
 
 
 def load_target_data(path=None):
-    """Charge les donnees cibles (target)"""
+    """Load target data"""
     if path is None:
         path = config.TARGET_TRAIN_PATH
     return pd.read_csv(path)
 
 
 def load_all_data():
-    """Charge toutes les donnees d'entrainement"""
+    """Load all training data"""
     clinical_train = load_clinical_data(train=True)
     clinical_test = load_clinical_data(train=False)
     molecular_train = load_molecular_data(train=True)

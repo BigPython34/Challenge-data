@@ -1,4 +1,4 @@
-# Fonctions de visualisation (SHAP, importances, etc.)
+# Visualization functions (SHAP, importances, etc.)
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -10,7 +10,7 @@ import shap
 def plot_feature_importances(
     importances, feature_names, top_n=20, title="Feature Importances"
 ):
-    """Affiche les importances des features"""
+    """Display feature importances"""
     indices = np.argsort(importances)[::-1]
 
     plt.figure(figsize=(12, 8))
@@ -31,8 +31,8 @@ def plot_feature_importances(
 
 
 def plot_correlation_matrix(df, figsize=(12, 8)):
-    """Affiche la matrice de correlation"""
-    # Selectionner seulement les colonnes numeriques
+    """Display correlation matrix"""
+    # Select only numeric columns
     numeric_df = df.select_dtypes(include=[np.number])
     corr_matrix = numeric_df.corr()
 

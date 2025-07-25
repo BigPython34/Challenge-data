@@ -7,6 +7,7 @@ import pickle
 import os
 import joblib
 import pandas as pd
+import numpy as np
 import argparse
 from src.data.prepare import prepare_enriched_dataset
 
@@ -27,22 +28,22 @@ def predict_and_submit(selected_model=None):
     print("Objectif : Generer les predictions sur les donnees de test")
     print("=" * 60)
 
-    # 1. Vérification et chargement du modèle et de l'imputer
+    # 1. Verification and loading of model and imputer
     print("\n 1. Chargement du modele entraine et de l'imputer...")
 
-    # Déterminer quel modèle utiliser
+    # Determine which model to use
     if selected_model:
-        # Modèle spécifique demandé
+        # Specific model requested
         model_file = f"{selected_model}.pkl"
         model_path = f"models/{model_file}"
 
         if os.path.exists(model_path):
             print(f"   Utilisation du modèle spécifique : {selected_model}")
             try:
-                # Les modèles individuels sont sauvegardés avec joblib, pas pickle
+                # Individual models are saved with joblib, not pickle
                 individual_model = joblib.load(model_path)
 
-                # Pour les modèles individuels, on doit charger l'imputer séparément
+                # For individual models, we must load the imputer separately
                 model_package_path = "models/model_package.pkl"
                 if os.path.exists(model_package_path):
                     with open(model_package_path, "rb") as f:
@@ -54,7 +55,7 @@ def predict_and_submit(selected_model=None):
                         "ATTENTION : Package modèle complet introuvable, utilisation d'imputation basique"
                     )
                     imputer = {"columns_imputed": []}
-                    # Charger les features depuis le dataset d'entraînement enrichi
+                    # Load features from the enriched training dataset
                     train_enriched_path = "datasets/enriched_train.csv"
                     if os.path.exists(train_enriched_path):
                         train_df = pd.read_csv(train_enriched_path)
@@ -108,7 +109,7 @@ def predict_and_submit(selected_model=None):
             selected_model = None
 
     if not selected_model:
-        # Utiliser le modèle par défaut (meilleur modèle)
+        # Use the default model (best model)
         model_package_path = "models/model_package.pkl"
 
         if not os.path.exists(model_package_path):
@@ -118,16 +119,16 @@ def predict_and_submit(selected_model=None):
             return None
 
         try:
-            # Charger le package modèle complet avec l'imputer
+            # Load the complete model package with imputer
             with open(model_package_path, "rb") as f:
                 model_package = pickle.load(f)
 
             best_model_dict = model_package["best_model"]
             best_model_name = model_package["best_model_name"]
             features = model_package["features"]
-            imputer = model_package["imputer"]  # Utiliser l'imputer du modèle
+            imputer = model_package["imputer"]  # Use the model's imputer
 
-            # Extraire le modèle du dictionnaire
+            # Extract the model from the dictionary
             best_model = best_model_dict["model"]
 
         except FileNotFoundError:
@@ -142,14 +143,14 @@ def predict_and_submit(selected_model=None):
     print(f"   Features : {len(features)}")
     print("   Imputer d'entrainement charge")
 
-    # 2. Chargement des données de test
+    # 2. Loading test data
     print("\n 2. Chargement des donnees de test...")
 
     # Import des fonctions de chargement
     from src.data.load import load_clinical_data, load_molecular_data
 
     try:
-        # Charger directement les données de test
+        # Load test data directly
         clinical_test = load_clinical_data(train=False)
         molecular_test = load_molecular_data(train=False)
 
@@ -161,35 +162,193 @@ def predict_and_submit(selected_model=None):
         print("   Verifiez que les fichiers de test existent dans datas/X_test/")
         return None
 
-    # 3. Préparation des données de test
+    # 3. Test data preparation
     print("\n 3. Preparation des donnees de test...")
 
     try:
-        # Préparer les données de test avec l'imputer exact utilisé pendant l'entraînement
-        df_test_enriched = prepare_enriched_dataset(
-            clinical_test,
-            molecular_test,
-            None,  # pas de target pour test
-            imputer=imputer,  # Utiliser le vrai imputer d'entraînement
-            advanced_imputation_method="medical",
-            is_training=False,
-            save_to_file="datasets/enriched_test.csv",  # Sauvegarder automatiquement
-        )
+        # Utiliser le nouveau systeme de preprocessing
+        # Verifier si le fichier enrichi de test existe deja
+        enriched_test_path = "datasets/enriched_test.csv"
 
-        print(f"   Dataset enrichi de test sauvegarde : datasets/enriched_test.csv")
+        if os.path.exists(enriched_test_path):
+            print(f"   Chargement du dataset de test pre-enrichi: {enriched_test_path}")
+            df_test_enriched = pd.read_csv(enriched_test_path)
+        else:
+            print(
+                "   Dataset de test non trouve, preparation a partir des donnees brutes..."
+            )
+            # Charger la configuration de preprocessing depuis les metadonnees
+            training_dataset_path = "datasets/training_dataset.pkl"
+            config = {}
 
-        # Préparer les features de test - utiliser la même logique que l'entraînement
-        # Exclure les colonnes de métadonnées
+            if os.path.exists(training_dataset_path):
+                try:
+                    with open(training_dataset_path, "rb") as f:
+                        training_data = pickle.load(f)
+                        config = training_data.get("config", {})
+                except:
+                    pass
+
+            if not config:
+                # Configuration par defaut si non disponible
+                config = {
+                    "clinical": ["CYTOGENETICSv3"],
+                    "molecular": ["GENE"],
+                    "additional": [
+                        ["cadd", "phred"],
+                        ["dbnsfp", "polyphen2", "hdiv", "score"],
+                        ["clinvar", "clinical_significance"],
+                        ["gnomad_exome", "af", "af"],
+                    ],
+                    "outliers": {"threshold": 0.05, "multiplier": 1.5},
+                    "feature_engineering": {"logs": ["DEPTH", "VAF"]},
+                    "aggregations": {
+                        "molecular": {
+                            "GENE": {
+                                "method": "one_hot",
+                                "min_count": 5,
+                                "rare_label": "gene_other",
+                            },
+                            "REF": {"method": "count_bases"},
+                            "ALT": {"method": "count_bases"},
+                        }
+                    },
+                }
+
+            # Utiliser les fonctions de preprocessing securisees
+            from src.utils.preprocess_safe import (
+                safe_parse_cytogenetics_v3,
+                safe_add_myvariant_data,
+                safe_create_one_hot,
+                safe_count_bases_per_id,
+                safe_log_transform,
+                safe_process_outliers,
+            )
+
+            # Preprocessing clinique
+            clinical_processed = clinical_test.copy()
+            if "CYTOGENETICSv3" in config.get("clinical", []):
+                clinical_processed = safe_parse_cytogenetics_v3(
+                    clinical_processed, "CYTOGENETICS"
+                )
+
+            # Nettoyage clinique
+            numeric_cols = clinical_processed.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols:
+                if clinical_processed[col].isna().sum() > 0:
+                    median_val = clinical_processed[col].median()
+                    clinical_processed[col].fillna(median_val, inplace=True)
+
+            categorical_cols = clinical_processed.select_dtypes(
+                include=["object"]
+            ).columns
+            for col in categorical_cols:
+                if clinical_processed[col].isna().sum() > 0:
+                    clinical_processed[col].fillna("unknown", inplace=True)
+
+            # Preprocessing moleculaire
+            molecular_processed = molecular_test.copy()
+
+            # MyVariant
+            additional_fields = config.get("additional", [])
+            if additional_fields:
+                molecular_processed = safe_add_myvariant_data(
+                    molecular_processed, additional_fields
+                )
+
+            # Feature engineering sur les genes
+            gene_features = None
+            if (
+                "GENE" in config.get("molecular", [])
+                and "GENE" in molecular_processed.columns
+            ):
+                gene_config = (
+                    config.get("aggregations", {}).get("molecular", {}).get("GENE", {})
+                )
+                if gene_config.get("method") == "one_hot":
+                    gene_features = safe_create_one_hot(
+                        molecular_processed,
+                        "ID",
+                        "GENE",
+                        gene_config.get("min_count", 5),
+                        gene_config.get("rare_label", "gene_other"),
+                    )
+
+            # Comptage des bases
+            ref_features = None
+            alt_features = None
+            if "REF" in molecular_processed.columns:
+                ref_features = safe_count_bases_per_id(molecular_processed, "ID", "REF")
+            if "ALT" in molecular_processed.columns:
+                alt_features = safe_count_bases_per_id(molecular_processed, "ID", "ALT")
+
+            # Transformations log
+            log_cols = config.get("feature_engineering", {}).get("logs", [])
+            for col in log_cols:
+                if col in molecular_processed.columns:
+                    molecular_processed[f"{col}_log"] = safe_log_transform(
+                        molecular_processed, col
+                    )
+
+            # Traitement des outliers
+            if "outliers" in config:
+                molecular_processed = safe_process_outliers(
+                    molecular_processed, **config["outliers"]
+                )
+
+            # Agregation au niveau patient
+            numeric_cols = molecular_processed.select_dtypes(
+                include=[np.number]
+            ).columns
+            numeric_cols = [c for c in numeric_cols if c != "ID"]
+
+            if len(numeric_cols) > 0:
+                molecular_agg = (
+                    molecular_processed.groupby("ID")[numeric_cols]
+                    .agg(["mean", "std", "count"])
+                    .reset_index()
+                )
+                molecular_agg.columns = ["ID"] + [
+                    f"{col}_{stat}" for col, stat in molecular_agg.columns[1:]
+                ]
+                molecular_agg = molecular_agg.fillna(0)
+            else:
+                molecular_agg = (
+                    molecular_processed[["ID"]].drop_duplicates().reset_index(drop=True)
+                )
+
+            # Merger avec les features additionnelles
+            if gene_features is not None:
+                molecular_agg = molecular_agg.merge(gene_features, on="ID", how="left")
+            if ref_features is not None:
+                molecular_agg = molecular_agg.merge(ref_features, on="ID", how="left")
+            if alt_features is not None:
+                molecular_agg = molecular_agg.merge(alt_features, on="ID", how="left")
+
+            molecular_agg = molecular_agg.fillna(0)
+
+            # Merge final
+            df_test_enriched = clinical_processed.merge(
+                molecular_agg, on="ID", how="inner"
+            )
+            df_test_enriched = df_test_enriched.fillna(0)
+
+            # Sauvegarder
+            df_test_enriched.to_csv(enriched_test_path, index=False)
+            print(f"   Dataset de test enrichi sauvegarde: {enriched_test_path}")
+
+        # Prepare test features - use the same logic as training
+        # Exclude metadata columns
         exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
         available_features = [
             col for col in df_test_enriched.columns if col not in exclude_cols
         ]
 
-        # Sélectionner seulement les features utilisées pendant l'entraînement
+        # Select only the features used during training
         missing_features = []
         for feature in features:
             if feature not in df_test_enriched.columns:
-                # Ajouter les features manquantes avec des zéros
+                # Add missing features with zeros
                 df_test_enriched[feature] = 0.0
                 missing_features.append(feature)
 
@@ -198,10 +357,10 @@ def predict_and_submit(selected_model=None):
                 f"   Features manquantes ajoutées (remplies avec 0) : {len(missing_features)}"
             )
 
-        # Sélectionner exactement les mêmes features que l'entraînement
+        # Select exactly the same features as training
         X_test_final = df_test_enriched[features]
 
-        # Vérification finale des valeurs manquantes
+        # Final check for missing values
         nan_count = X_test_final.isnull().sum().sum()
         if nan_count > 0:
             print(
@@ -230,9 +389,30 @@ def predict_and_submit(selected_model=None):
             predictions = best_model.predict(X_test_final)
 
         # Créer le DataFrame de soumission
+        # Utiliser les IDs du dataset enrichi qui correspondent aux predictions
         submission_df = pd.DataFrame(
-            {"ID": clinical_test["ID"], "risk_score": predictions}
+            {"ID": df_test_enriched["ID"], "risk_score": predictions}
         )
+
+        # Pour les IDs cliniques qui n'ont pas de donnees moleculaires,
+        # ajouter des predictions par defaut (moyenne des autres predictions)
+        all_clinical_ids = set(clinical_test["ID"])
+        predicted_ids = set(submission_df["ID"])
+        missing_ids = all_clinical_ids - predicted_ids
+
+        if missing_ids:
+            print(f"   {len(missing_ids)} IDs cliniques sans donnees moleculaires")
+            default_risk = submission_df["risk_score"].mean()
+
+            missing_df = pd.DataFrame(
+                {
+                    "ID": list(missing_ids),
+                    "risk_score": [default_risk] * len(missing_ids),
+                }
+            )
+
+            submission_df = pd.concat([submission_df, missing_df], ignore_index=True)
+            submission_df = submission_df.sort_values("ID").reset_index(drop=True)
 
         print(f"   Predictions generees : {len(submission_df)} echantillons")
         print(f"   Type du modele : {type(best_model).__name__}")
