@@ -20,9 +20,6 @@ from ...config import (
     CYTOGENETIC_ADVERSE,
     CYTOGENETIC_INTERMEDIATE,
     ALL_IMPORTANT_GENES,
-    FAVORABLE_GENES,
-    ADVERSE_GENES,
-    INTERMEDIATE_GENES,
     GENE_PATHWAYS,
 )
 
@@ -32,7 +29,6 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
     Create interpretable and prognostic clinical features.
 
     Based on established prognostic factors in AML:
-    - Age (continuous + categorical)
     - Blood counts and their ratios
     - Bone marrow blast percentage
     - Cytopenias (anemia, thrombocytopenia, neutropenia)
@@ -51,79 +47,105 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== BASE FEATURES (cleaning) =====
     numeric_columns = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
-    for col in numeric_columns:
-        if col in clinical_df.columns:
-            clinical_df[col] = pd.to_numeric(clinical_df[col], errors="coerce")
+    clinical_df = _ensure_numeric_columns(clinical_df, numeric_columns)
 
     # ===== CLINICALLY RELEVANT RATIOS =====
-
-    # Neutrophil/WBC ratio (measure of granulocytic maturation)
-    clinical_df["neutrophil_ratio"] = clinical_df["ANC"] / clinical_df["WBC"]
-    clinical_df["neutrophil_ratio"] = clinical_df["neutrophil_ratio"].replace(
-        [np.inf, -np.inf], np.nan
-    )
-
-    # Monocyte/WBC ratio (elevation = unfavorable prognosis)
-    clinical_df["monocyte_ratio"] = clinical_df["MONOCYTES"] / clinical_df["WBC"]
-    clinical_df["monocyte_ratio"] = clinical_df["monocyte_ratio"].replace(
-        [np.inf, -np.inf], np.nan
-    )
-
-    # Platelet/WBC ratio (general hematopoiesis measure)
-    clinical_df["platelet_wbc_ratio"] = clinical_df["PLT"] / clinical_df["WBC"]
-    clinical_df["platelet_wbc_ratio"] = clinical_df["platelet_wbc_ratio"].replace(
-        [np.inf, -np.inf], np.nan
-    )
+    clinical_df = _create_clinical_ratios(clinical_df)
 
     # ===== CLINICAL THRESHOLDS (binary) =====
-
-    # Anemia (HB < 10 g/dL = moderate, < 8 g/dL = severe)
-    clinical_df["anemia_moderate"] = (clinical_df["HB"] < 10).astype(int)
-    clinical_df["anemia_severe"] = (clinical_df["HB"] < 8).astype(int)
-
-    # Thrombocytopenia (PLT < 100 = moderate, < 50 = severe)
-    clinical_df["thrombocytopenia_moderate"] = (clinical_df["PLT"] < 100).astype(int)
-    clinical_df["thrombocytopenia_severe"] = (clinical_df["PLT"] < 50).astype(int)
-
-    # Neutropenia (ANC < 1.5 = moderate, < 1.0 = severe)
-    clinical_df["neutropenia_moderate"] = (clinical_df["ANC"] < 1.5).astype(int)
-    clinical_df["neutropenia_severe"] = (clinical_df["ANC"] < 1.0).astype(int)
-
-    # Leukocytosis (WBC > 30 = high)
-    clinical_df["leukocytosis_high"] = (clinical_df["WBC"] > 30).astype(int)
-
-    # High bone marrow blast count (>20% = AML)
-    clinical_df["high_blast_count"] = (clinical_df["BM_BLAST"] > 20).astype(int)
+    clinical_df = _create_clinical_thresholds(clinical_df)
 
     # ===== COMPOSITE CLINICAL SCORES =====
-
-    # Cytopenia score (0-3, based on anemia + thrombocytopenia + neutropenia)
-    clinical_df["cytopenia_score"] = (
-        clinical_df["anemia_moderate"]
-        + clinical_df["thrombocytopenia_moderate"]
-        + clinical_df["neutropenia_moderate"]
-    )
-
-    # Pancytopenia (all lineages affected)
-    clinical_df["pancytopenia"] = (clinical_df["cytopenia_score"] == 3).astype(int)
-
-    # Proliferation score (blasts + leukocytosis)
-    clinical_df["proliferation_score"] = (
-        clinical_df["high_blast_count"] + clinical_df["leukocytosis_high"]
-    )
+    clinical_df = _create_composite_scores(clinical_df)
 
     # ===== LOG TRANSFORMATIONS (for skewed distributions) =====
-    for col in ["WBC", "PLT", "ANC", "MONOCYTES"]:
-        if col in clinical_df.columns:
-            clinical_df[f"log_{col}"] = np.log1p(clinical_df[col].fillna(0))
-
-    # ===== ADDITIONAL RATIOS =====
-    clinical_df["blast_platelet_ratio"] = clinical_df["BM_BLAST"] / clinical_df["PLT"]
+    clinical_df = _create_log_transformations(clinical_df)
 
     # Handle infinite values
     clinical_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     return clinical_df
+
+
+def _ensure_numeric_columns(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
+    """Ensure specified columns are numeric."""
+    for col in columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
+
+
+def _create_clinical_ratios(df: pd.DataFrame) -> pd.DataFrame:
+    """Create clinically relevant ratios."""
+    ratios = {
+        "neutrophil_ratio": ("ANC", "WBC"),  # Granulocytic maturation
+        "monocyte_ratio": ("MONOCYTES", "WBC"),  # Unfavorable if elevated
+        "platelet_wbc_ratio": ("PLT", "WBC"),  # General hematopoiesis
+        "blast_platelet_ratio": ("BM_BLAST", "PLT"),  # Additional ratio
+    }
+
+    for ratio_name, (numerator, denominator) in ratios.items():
+        if numerator in df.columns and denominator in df.columns:
+            df[ratio_name] = df[numerator] / df[denominator]
+            df[ratio_name] = df[ratio_name].replace([np.inf, -np.inf], np.nan)
+
+    return df
+
+
+def _create_clinical_thresholds(df: pd.DataFrame) -> pd.DataFrame:
+    """Create binary features based on clinical thresholds."""
+    thresholds = {
+        # Anemia thresholds
+        "anemia_moderate": ("HB", "<", 10),
+        "anemia_severe": ("HB", "<", 8),
+        # Thrombocytopenia thresholds
+        "thrombocytopenia_moderate": ("PLT", "<", 100),
+        "thrombocytopenia_severe": ("PLT", "<", 50),
+        # Neutropenia thresholds
+        "neutropenia_moderate": ("ANC", "<", 1.5),
+        "neutropenia_severe": ("ANC", "<", 1.0),
+        # Other thresholds
+        "leukocytosis_high": ("WBC", ">", 30),
+        "high_blast_count": ("BM_BLAST", ">", 20),
+    }
+
+    for feature_name, (column, operator, threshold) in thresholds.items():
+        if column in df.columns:
+            if operator == "<":
+                df[feature_name] = (df[column] < threshold).astype(int)
+            elif operator == ">":
+                df[feature_name] = (df[column] > threshold).astype(int)
+
+    return df
+
+
+def _create_composite_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Create composite clinical scores."""
+    # Cytopenia score (0-3, based on anemia + thrombocytopenia + neutropenia)
+    cytopenia_components = [
+        "anemia_moderate",
+        "thrombocytopenia_moderate",
+        "neutropenia_moderate",
+    ]
+    if all(col in df.columns for col in cytopenia_components):
+        df["cytopenia_score"] = df[cytopenia_components].sum(axis=1)
+        df["pancytopenia"] = (df["cytopenia_score"] == 3).astype(int)
+
+    # Proliferation score (blasts + leukocytosis)
+    proliferation_components = ["high_blast_count", "leukocytosis_high"]
+    if all(col in df.columns for col in proliferation_components):
+        df["proliferation_score"] = df[proliferation_components].sum(axis=1)
+
+    return df
+
+
+def _create_log_transformations(df: pd.DataFrame) -> pd.DataFrame:
+    """Create log transformations for skewed distributions."""
+    log_columns = ["WBC", "PLT", "ANC", "MONOCYTES"]
+    for col in log_columns:
+        if col in df.columns:
+            df[f"log_{col}"] = np.log1p(df[col].fillna(0))
+    return df
 
 
 def extract_cytogenetic_risk_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -146,11 +168,13 @@ def extract_cytogenetic_risk_features(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Features indexed by patient ID with cytogenetic characteristics
     """
+    if "CYTOGENETICS" not in df.columns:
+        return df
+
     result_df = pd.DataFrame(index=df.index)
 
     # Clean and prepare cytogenetics data
-    cytogenetics_raw = df["CYTOGENETICS"].fillna("46,XX")  # Default normal karyotype
-    cytogenetics_clean = cytogenetics_raw.str.strip()
+    cytogenetics_clean = df["CYTOGENETICS"].fillna("46,XX").str.strip()
 
     # === BASIC CHROMOSOME CHARACTERISTICS ===
     result_df = _extract_basic_chromosome_features(result_df, cytogenetics_clean)
@@ -417,28 +441,38 @@ def _extract_eln2022_cytogenetic_abnormalities(
             pattern, case=False, regex=True, na=False
         ).astype(int)
 
-    # Favorable abnormalities
-    result_df["t_8_21"] = contains_pattern(CYTOGENETIC_FAVORABLE[0])
-    result_df["inv_16"] = contains_pattern(CYTOGENETIC_FAVORABLE[1])
-    result_df["t_16_16"] = contains_pattern(CYTOGENETIC_FAVORABLE[2])
-    result_df["t_15_17"] = contains_pattern(CYTOGENETIC_FAVORABLE[3])
-    result_df["any_favorable_cyto"] = result_df[
-        ["t_8_21", "inv_16", "t_16_16", "t_15_17"]
-    ].max(axis=1)
+    # === FAVORABLE ABNORMALITIES ===
+    favorable_features = {
+        "t_8_21": CYTOGENETIC_FAVORABLE[0],
+        "inv_16": CYTOGENETIC_FAVORABLE[1],
+        "t_16_16": CYTOGENETIC_FAVORABLE[2],
+        "t_15_17": CYTOGENETIC_FAVORABLE[3],
+    }
 
-    # Intermediate abnormalities
+    for feature_name, pattern in favorable_features.items():
+        result_df[feature_name] = contains_pattern(pattern)
+
+    result_df["any_favorable_cyto"] = result_df[list(favorable_features.keys())].max(
+        axis=1
+    )
+
+    # === INTERMEDIATE ABNORMALITIES ===
     result_df["normal_karyotype"] = cytogenetics.str.match(
         CYTOGENETIC_INTERMEDIATE[0], na=False
     ).astype(int)
     result_df["trisomy_8"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[1])
 
-    # Adverse abnormalities
-    result_df["del_5q"] = contains_pattern(CYTOGENETIC_ADVERSE[0])
-    result_df["monosomy_7"] = contains_pattern(CYTOGENETIC_ADVERSE[1])
-    result_df["del_17p"] = contains_pattern(CYTOGENETIC_ADVERSE[2])
+    # === ADVERSE ABNORMALITIES ===
+    adverse_features = {
+        "del_5q": CYTOGENETIC_ADVERSE[0],
+        "monosomy_7": CYTOGENETIC_ADVERSE[1],
+        "del_17p": CYTOGENETIC_ADVERSE[2],
+    }
 
-    adverse_abnormalities = ["del_5q", "monosomy_7", "del_17p"]
-    result_df["any_adverse_cyto"] = result_df[adverse_abnormalities].max(axis=1)
+    for feature_name, pattern in adverse_features.items():
+        result_df[feature_name] = contains_pattern(pattern)
+
+    result_df["any_adverse_cyto"] = result_df[list(adverse_features.keys())].max(axis=1)
 
     return result_df
 
@@ -591,7 +625,22 @@ def _calculate_eln2022_molecular_risk(molecular_df: pd.DataFrame) -> pd.DataFram
     molecular_df["eln_molecular_risk"] = 1
 
     # Favorable molecular features (0)
+    favorable_mask = _get_favorable_molecular_mask(molecular_df)
+    if favorable_mask is not None:
+        molecular_df.loc[favorable_mask, "eln_molecular_risk"] = 0
+
+    # Adverse molecular features (2)
+    adverse_mask = _get_adverse_molecular_mask(molecular_df)
+    if adverse_mask is not None:
+        molecular_df.loc[adverse_mask, "eln_molecular_risk"] = 2
+
+    return molecular_df
+
+
+def _get_favorable_molecular_mask(molecular_df: pd.DataFrame) -> pd.Series:
+    """Get boolean mask for favorable molecular features."""
     favorable_conditions = []
+
     if "mut_NPM1" in molecular_df.columns:
         npm1_favorable = (molecular_df["mut_NPM1"] == 1) & (
             molecular_df.get("mut_FLT3", 0) == 0
@@ -601,11 +650,15 @@ def _calculate_eln2022_molecular_risk(molecular_df: pd.DataFrame) -> pd.DataFram
     if "CEBPA_biallelic" in molecular_df.columns:
         favorable_conditions.append(molecular_df["CEBPA_biallelic"] == 1)
 
-    if favorable_conditions:
-        favorable_mask = pd.concat(favorable_conditions, axis=1).any(axis=1)
-        molecular_df.loc[favorable_mask, "eln_molecular_risk"] = 0
+    return (
+        pd.concat(favorable_conditions, axis=1).any(axis=1)
+        if favorable_conditions
+        else None
+    )
 
-    # Adverse molecular features (2)
+
+def _get_adverse_molecular_mask(molecular_df: pd.DataFrame) -> pd.Series:
+    """Get boolean mask for adverse molecular features."""
     adverse_conditions = []
     adverse_genes = ["TP53", "ASXL1", "RUNX1", "BCOR", "EZH2"]
 
@@ -616,11 +669,11 @@ def _calculate_eln2022_molecular_risk(molecular_df: pd.DataFrame) -> pd.DataFram
     if "FLT3_high_VAF" in molecular_df.columns:
         adverse_conditions.append(molecular_df["FLT3_high_VAF"] == 1)
 
-    if adverse_conditions:
-        adverse_mask = pd.concat(adverse_conditions, axis=1).any(axis=1)
-        molecular_df.loc[adverse_mask, "eln_molecular_risk"] = 2
-
-    return molecular_df
+    return (
+        pd.concat(adverse_conditions, axis=1).any(axis=1)
+        if adverse_conditions
+        else None
+    )
 
 
 def _merge_feature_dataframes(
@@ -696,6 +749,23 @@ def _create_integrated_risk_scores(final_df: pd.DataFrame) -> pd.DataFrame:
     final_df["eln_integrated_risk"] = final_df.get("eln_cyto_risk", 1)
 
     # For normal cytogenetics, use molecular risk
+    final_df = _apply_molecular_risk_for_normal_cytogenetics(final_df)
+
+    # Clinical composite scores
+    final_df["clinical_risk_score"] = final_df.get("cytopenia_score", 0) + final_df.get(
+        "proliferation_score", 0
+    )
+
+    # Comprehensive risk score (weighted combination)
+    final_df = _calculate_comprehensive_risk_score(final_df)
+
+    return final_df
+
+
+def _apply_molecular_risk_for_normal_cytogenetics(
+    final_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Apply molecular risk for patients with normal cytogenetics."""
     if (
         "eln_molecular_risk" in final_df.columns
         and "normal_karyotype" in final_df.columns
@@ -704,22 +774,26 @@ def _create_integrated_risk_scores(final_df: pd.DataFrame) -> pd.DataFrame:
         final_df.loc[normal_cyto_mask, "eln_integrated_risk"] = final_df.loc[
             normal_cyto_mask, "eln_molecular_risk"
         ]
+    return final_df
 
-    # Clinical composite scores
-    final_df["clinical_risk_score"] = final_df.get("cytopenia_score", 0) + final_df.get(
-        "proliferation_score", 0
-    )
 
-    # Comprehensive risk score (weighted combination)
+def _calculate_comprehensive_risk_score(final_df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate comprehensive risk score from multiple components."""
     risk_components = []
+
     if "eln_integrated_risk" in final_df.columns:
         risk_components.append(final_df["eln_integrated_risk"] * 0.5)
-    if "clinical_risk_score" in final_df.columns:
+
+    if (
+        "clinical_risk_score" in final_df.columns
+        and final_df["clinical_risk_score"].max() > 0
+    ):
         clinical_normalized = (
             final_df["clinical_risk_score"] / final_df["clinical_risk_score"].max()
         )
         risk_components.append(clinical_normalized * 0.3)
-    if "total_mutations" in final_df.columns:
+
+    if "total_mutations" in final_df.columns and final_df["total_mutations"].max() > 0:
         mutation_normalized = (
             final_df["total_mutations"] / final_df["total_mutations"].max()
         )

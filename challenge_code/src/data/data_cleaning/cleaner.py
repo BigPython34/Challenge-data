@@ -72,7 +72,9 @@ def _clean_survival_data(target_df: pd.DataFrame) -> pd.DataFrame:
 
     # Validate survival data types
     target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
-    target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
+    target_clean["OS_STATUS"] = pd.to_numeric(
+        target_clean["OS_STATUS"], errors="coerce"
+    ).astype(int)
 
     # Remove negative or zero survival times
     invalid_survival = (target_clean["OS_YEARS"] <= 0) | target_clean["OS_YEARS"].isna()

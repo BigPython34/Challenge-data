@@ -111,20 +111,21 @@ COX_PARAMS = {
 }
 
 RSF_PARAMS = {
-    "n_estimators": 100,
-    "min_samples_split": 10,
-    "min_samples_leaf": 5,
-    "max_depth": 5,
+    "n_estimators": 200,  # Augmentation pour plus de stabilité
+    "min_samples_split": 20,  # Augmentation pour plus de régularisation
+    "min_samples_leaf": 10,  # Augmentation pour plus de régularisation
+    "max_depth": 10,  # Légère augmentation mais toujours contrôlé
 }
 
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 850,
-    "learning_rate": 0.03160736770883459,
+    "n_estimators": 300,  # Réduction de 850 à 300
+    "learning_rate": 0.1,  # Augmentation pour plus de stabilité
     "max_depth": 3,
-    "subsample": 0.8118022194771892,
-    "min_samples_leaf": 4,
-    "min_samples_split": 4,
+    "subsample": 0.8,  # Sous-échantillonnage pour réduire l'overfitting
+    "min_samples_leaf": 15,  # Augmentation pour plus de régularisation
+    "min_samples_split": 30,  # Augmentation pour plus de régularisation
 }
+# 0,7545788740320561 best
 
 # Parameters for CoxNet (Cox with regularization)
 COXNET_PARAMS = {
