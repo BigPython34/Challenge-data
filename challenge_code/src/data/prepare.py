@@ -1,299 +1,40 @@
 """
-Preprocessing médical intelligent pour la modélisation de survie en LMA
+Data preparation orchestrator for AML survival analysis.
 
-Ce module gère le preprocessing complet des données de leucémie myéloïde aiguë
-avec une approche médicalement informée :
+This module serves as the main orchestrator for data preparation, coordinating
+between specialized modules for cleaning, imputation, and feature engineering.
 
-1. Nettoyage et validation des données
-2. Imputation intelligente basée sur le contexte médical
-3. Feature engineering cliniquement pertinent
-4. Préparation pour les modèles de survie
+Main functions:
+- prepare_survival_dataset: Complete pipeline for survival analysis
+- prepare_enriched_dataset: Legacy compatibility function
+- get_survival_feature_sets: Predefined feature sets for different use cases
 
-Principes directeurs:
-- Préserver l'information temporelle (survie)
-- Utiliser des méthodes d'imputation adaptées au domaine médical
-- Maintenir l'interprétabilité clinique
-- Robustesse aux données manquantes
+Architecture:
+- Data cleaning: src.data.data_cleaning
+- Feature engineering: src.data.features
+- Coordination and integration: this module
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
-import warnings
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import BayesianRidge
 from sksurv.util import Surv
 
-from .. import config
 from ..config import SEED
-from . import features
-
-
-def clean_and_validate_data(
-    clinical_df: pd.DataFrame, molecular_df: pd.DataFrame, target_df: pd.DataFrame
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Nettoyage et validation initiale des données
-
-    Parameters:
-    -----------
-    clinical_df, molecular_df, target_df : DataFrames brutes
-
-    Returns:
-    --------
-    Tuple : DataFrames nettoyées
-    """
-    print("=== DATA CLEANING AND VALIDATION ===")
-
-    # ===== TARGET CLEANING (crucial for survival) =====
-
-    # Remove patients without survival data
-    target_clean = target_df.dropna(subset=["OS_YEARS", "OS_STATUS"]).copy()
-
-    # Validate survival data
-    target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
-    target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
-
-    # Remove negative or zero survival times
-    invalid_survival = (target_clean["OS_YEARS"] <= 0) | target_clean["OS_YEARS"].isna()
-    if invalid_survival.any():
-        print(
-            f"Suppression de {invalid_survival.sum()} patients avec temps de survie invalide"
-        )
-        target_clean = target_clean[~invalid_survival]
-
-    print(f"Target nettoye: {len(target_clean)} patients")
-    print(f"   - Death rate: {target_clean['OS_STATUS'].mean():.1%}")
-    print(f"   - Median survival: {target_clean['OS_YEARS'].median():.2f} years")
-
-    # ===== CLINICAL CLEANING =====
-
-    # Keep only patients with survival data
-    clinical_clean = clinical_df[clinical_df["ID"].isin(target_clean["ID"])].copy()
-
-    # Validate clinical measurements
-    numeric_cols = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
-    for col in numeric_cols:
-        if col in clinical_clean.columns:
-            # Convertir en numérique
-            clinical_clean[col] = pd.to_numeric(clinical_clean[col], errors="coerce")
-
-            # Détecter les valeurs aberrantes biologiquement impossibles
-            if col == "BM_BLAST":
-                # Blastes ne peuvent pas dépasser 100%
-                clinical_clean.loc[clinical_clean[col] > 100, col] = np.nan
-            elif col in ["WBC", "ANC", "MONOCYTES", "PLT"]:
-                # Valeurs négatives impossibles
-                clinical_clean.loc[clinical_clean[col] < 0, col] = np.nan
-            elif col == "HB":
-                # Hémoglobine doit être dans une plage raisonnable
-                clinical_clean.loc[
-                    (clinical_clean[col] < 3) | (clinical_clean[col] > 20), col
-                ] = np.nan
-
-    print(f"Clinique nettoye: {len(clinical_clean)} patients")
-
-    # ===== MOLECULAR CLEANING =====
-
-    # Garder seulement les patients avec données de survie
-    molecular_clean = molecular_df[molecular_df["ID"].isin(target_clean["ID"])].copy()
-
-    # Valider les données de mutations
-    molecular_clean["VAF"] = pd.to_numeric(molecular_clean["VAF"], errors="coerce")
-    molecular_clean["DEPTH"] = pd.to_numeric(molecular_clean["DEPTH"], errors="coerce")
-
-    # Filtrer les mutations de qualité douteuse
-    # VAF doit être entre 0 et 1, depth > 10 pour être fiable
-    valid_mutations = (
-        (molecular_clean["VAF"] >= 0)
-        & (molecular_clean["VAF"] <= 1)
-        & (molecular_clean["DEPTH"] >= 10)
-    )
-
-    invalid_count = (~valid_mutations).sum()
-    if invalid_count > 0:
-        print(f"Suppression de {invalid_count} mutations de qualite douteuse")
-        molecular_clean = molecular_clean[valid_mutations]
-
-    print(
-        f"Moleculaire nettoye: {len(molecular_clean)} mutations sur {molecular_clean['ID'].nunique()} patients"
-    )
-
-    return clinical_clean, molecular_clean, target_clean
-
-
-def medical_imputation_strategy(
-    df: pd.DataFrame, column: str, patient_context: Optional[pd.DataFrame] = None
-) -> pd.Series:
-    """
-    Imputation médicalement informée pour une colonne spécifique
-
-    Utilise la connaissance du domaine médical pour choisir la meilleure
-    stratégie d'imputation selon le type de mesure clinique.
-
-    Parameters:
-    -----------
-    df : pd.DataFrame avec les données
-    column : str, nom de la colonne à imputer
-    patient_context : pd.DataFrame optionnel avec contexte additionnel
-
-    Returns:
-    --------
-    pd.Series : Valeurs imputées
-    """
-    values = df[column].copy()
-    missing_mask = values.isna()
-
-    if not missing_mask.any():
-        return values
-
-    print(
-        f"   🏥 Imputation médicale pour {column} ({missing_mask.sum()} valeurs manquantes)"
-    )
-
-    # ===== SPECIFIC STRATEGIES BY CLINICAL MEASURE =====
-
-    if column == "BM_BLAST":
-        # Blastes médullaires: utiliser la médiane, car distribution asymétrique
-        # Si WBC très élevé, supposer blastose élevée (corrélation connue)
-        if "WBC" in df.columns:
-            high_wbc_mask = (df["WBC"] > 25) & missing_mask
-            normal_wbc_mask = (df["WBC"] <= 25) & missing_mask
-
-            median_val = values.median()
-            high_wbc_median = (
-                values[df["WBC"] > 25].median()
-                if (df["WBC"] > 25).any()
-                else median_val
-            )
-
-            values.loc[high_wbc_mask] = high_wbc_median
-            values.loc[normal_wbc_mask] = median_val
-        else:
-            values.fillna(values.median(), inplace=True)
-
-    elif column in ["WBC", "ANC", "MONOCYTES", "PLT"]:
-        # Comptages cellulaires: distribution log-normale
-        # Utiliser imputation par regression si d'autres comptages disponibles
-        other_counts = ["WBC", "ANC", "MONOCYTES", "PLT"]
-        other_counts = [c for c in other_counts if c in df.columns and c != column]
-
-        if len(other_counts) >= 2:
-            # Imputation par régression (relation entre les comptages)
-            from sklearn.linear_model import LinearRegression
-
-            # Préparer les données pour la régression
-            X = df[other_counts].fillna(df[other_counts].median())
-            y = values.dropna()
-            X_train = X.loc[y.index]
-
-            if len(y) > 10:  # Assez de données pour la régression
-                reg = LinearRegression()
-                reg.fit(X_train, y)
-
-                # Prédire les valeurs manquantes
-                X_missing = X.loc[missing_mask]
-                predictions = reg.predict(X_missing)
-
-                # Éviter les valeurs négatives
-                predictions = np.maximum(predictions, 0.1)
-                values.loc[missing_mask] = predictions
-            else:
-                # Fallback: médiane
-                values.fillna(values.median(), inplace=True)
-        else:
-            # Fallback: médiane
-            values.fillna(values.median(), inplace=True)
-
-    elif column == "HB":
-        # Hémoglobine: corrélée avec l'âge et le sexe
-        # Utiliser des valeurs normales par tranche d'âge si possible
-        median_val = values.median()
-
-        # Distinguer anémie selon le contexte (si d'autres cytopénies présentes)
-        if (
-            patient_context is not None
-            and "cytopenia_context" in patient_context.columns
-        ):
-            # Si autres cytopénies, HB probablement plus basse
-            cytopenia_mask = patient_context["cytopenia_context"] & missing_mask
-            normal_mask = ~patient_context["cytopenia_context"] & missing_mask
-
-            anemic_median = values[patient_context["cytopenia_context"]].median()
-            normal_median = values[~patient_context["cytopenia_context"]].median()
-
-            if not np.isnan(anemic_median):
-                values.loc[cytopenia_mask] = anemic_median
-            if not np.isnan(normal_median):
-                values.loc[normal_mask] = normal_median
-        else:
-            values.fillna(median_val, inplace=True)
-
-    else:
-        # Stratégie par défaut: médiane pour les variables continues
-        values.fillna(values.median(), inplace=True)
-
-    print(f"      {missing_mask.sum()} valeurs imputees")
-    return values
-
-
-def intelligent_clinical_imputation(
-    clinical_df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, Dict]:
-    """
-    Imputation intelligente des données cliniques avec contexte médical
-
-    Parameters:
-    -----------
-    clinical_df : pd.DataFrame avec données cliniques
-
-    Returns:
-    --------
-    Tuple : (DataFrame imputé, métadonnées d'imputation)
-    """
-    print("=== IMPUTATION CLINIQUE INTELLIGENTE ===")
-
-    df_imputed = clinical_df.copy()
-    imputation_metadata = {"method": "medical_informed", "columns_imputed": []}
-
-    # Créer un contexte de cytopénies pour informer l'imputation de l'HB
-    cytopenia_context = pd.DataFrame(index=df_imputed.index)
-    cytopenia_context["cytopenia_context"] = (
-        (df_imputed["PLT"] < 100) | (df_imputed["ANC"] < 1.5)
-    ).fillna(False)
-
-    # Ordre d'imputation basé sur les dépendances médicales
-    # 1. D'abord les comptages principaux (WBC)
-    # 2. Puis les sous-populations (ANC, MONOCYTES)
-    # 3. Puis les autres lignées (PLT, HB)
-    # 4. Enfin les mesures dérivées (BM_BLAST)
-
-    imputation_order = ["WBC", "ANC", "MONOCYTES", "PLT", "HB", "BM_BLAST"]
-
-    for column in imputation_order:
-        if column in df_imputed.columns and df_imputed[column].isna().any():
-            df_imputed[column] = medical_imputation_strategy(
-                df_imputed, column, cytopenia_context
-            )
-            imputation_metadata["columns_imputed"].append(column)
-
-    # Gestion des données catégorielles
-    if "CENTER" in df_imputed.columns:
-        df_imputed["CENTER"] = df_imputed["CENTER"].fillna("Unknown")
-
-    if "CYTOGENETICS" in df_imputed.columns:
-        # Cytogénétique manquante = normale (hypothèse médicale standard)
-        df_imputed["CYTOGENETICS"] = df_imputed["CYTOGENETICS"].fillna("46,XX")
-
-    print("Imputation clinique terminee")
-    print(f"   Colonnes imputées: {imputation_metadata['columns_imputed']}")
-    print(f"   Valeurs manquantes restantes: {df_imputed.isna().sum().sum()}")
-
-    return df_imputed, imputation_metadata
+from .data_cleaning import (
+    clean_and_validate_data,
+    intelligent_clinical_imputation,
+    ImputationStrategy,
+)
+from .features import (
+    create_clinical_features,
+    extract_cytogenetic_risk_features,
+    extract_molecular_risk_features,
+    create_molecular_burden_features,
+    combine_all_features,
+    get_clean_feature_lists,
+)
 
 
 def prepare_survival_dataset(
@@ -302,103 +43,111 @@ def prepare_survival_dataset(
     target_df: pd.DataFrame,
     test_size: float = 0.2,
     use_advanced_features: bool = True,
+    imputation_strategy: ImputationStrategy = ImputationStrategy.MEDICAL_INFORMED,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     """
-    Préparation complète du dataset pour la modélisation de survie
+    Complete pipeline for survival dataset preparation.
 
-    Pipeline complet:
-    1. Nettoyage et validation
-    2. Feature engineering médical
-    3. Imputation intelligente
-    4. Split train/test
-    5. Préparation des cibles de survie
+    This function orchestrates the entire data preparation process:
+    1. Data cleaning and validation
+    2. Medical feature engineering
+    3. Intelligent imputation
+    4. Train/test split
+    5. Survival target preparation
 
-    Parameters:
-    -----------
-    clinical_df, molecular_df, target_df : DataFrames bruts
-    test_size : proportion pour le test set
-    use_advanced_features : utiliser le feature engineering avancé
+    Parameters
+    ----------
+    clinical_df, molecular_df, target_df : pd.DataFrame
+        Raw input dataframes
+    test_size : float
+        Proportion for test set
+    use_advanced_features : bool
+        Whether to use advanced feature engineering
+    imputation_strategy : ImputationStrategy
+        Strategy for handling missing values
 
-    Returns:
-    --------
-    Tuple : (train_df, test_df, metadata)
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame, Dict]
+        train_df, test_df, metadata
     """
-    print("🏥 === PRÉPARATION DATASET DE SURVIE EN LMA ===")
+    print("🏥 === AML SURVIVAL DATASET PREPARATION ===")
 
-    # ===== 1. NETTOYAGE ET VALIDATION =====
+    # ===== 1. DATA CLEANING AND VALIDATION =====
     clinical_clean, molecular_clean, target_clean = clean_and_validate_data(
         clinical_df, molecular_df, target_df
     )
 
-    # ===== 2. FEATURE ENGINEERING MÉDICAL =====
+    # ===== 2. MEDICAL FEATURE ENGINEERING =====
     if use_advanced_features:
-        print("\n=== FEATURE ENGINEERING MÉDICAL ===")
+        print("\n=== MEDICAL FEATURE ENGINEERING ===")
 
-        # Features cliniques
-        clinical_features = features.create_clinical_features(clinical_clean)
-        print(f"Features cliniques: {len(clinical_features.columns)} variables")
+        # Clinical features
+        clinical_features = create_clinical_features(clinical_clean)
+        print(f"Clinical features: {len(clinical_features.columns)} variables")
 
-        # Features cytogénétiques
-        cyto_features = features.extract_cytogenetic_risk_features(clinical_features)
-        print(f"Features cytogenetiques: {len(cyto_features.columns)} variables")
+        # Cytogenetic features
+        cyto_features = extract_cytogenetic_risk_features(clinical_features)
+        print(f"Cytogenetic features: {len(cyto_features.columns)} variables")
 
-        # Features moléculaires
-        molecular_features = features.extract_molecular_risk_features(
+        # Molecular features
+        molecular_features = extract_molecular_risk_features(
             clinical_features, molecular_clean
         )
-        burden_features = features.create_molecular_burden_features(molecular_clean)
+        burden_features = create_molecular_burden_features(molecular_clean)
         print(
-            f"Features moleculaires: {len(molecular_features.columns)} + {len(burden_features.columns)} variables"
+            f"Molecular features: {len(molecular_features.columns)} + {len(burden_features.columns)} variables"
         )
 
-        # Combinaison de toutes les features
-        enriched_df = features.combine_all_features(
+        # Combine all features
+        enriched_df = combine_all_features(
             clinical_features, molecular_features, burden_features, cyto_features
         )
-        print(f"Dataset enrichi: {enriched_df.shape}")
+        print(f"Enriched dataset: {enriched_df.shape}")
 
     else:
-        # Version simple
+        # Simple version
         enriched_df = clinical_clean.copy()
 
-    # ===== 3. IMPUTATION INTELLIGENTE =====
-    enriched_df, imputation_metadata = intelligent_clinical_imputation(enriched_df)
+    # ===== 3. INTELLIGENT IMPUTATION =====
+    enriched_df, imputation_metadata = intelligent_clinical_imputation(
+        enriched_df, strategy=imputation_strategy
+    )
 
-    # ===== 4. MERGER AVEC LES TARGETS =====
+    # ===== 4. MERGE WITH TARGETS =====
     final_df = enriched_df.merge(target_clean, on="ID", how="inner")
-    print(f"Dataset final: {final_df.shape}")
+    print(f"Final dataset: {final_df.shape}")
 
-    # ===== 5. SPLIT TRAIN/TEST STRATIFIÉ =====
-    # Stratification sur le status de survie pour équilibrer les événements
+    # ===== 5. STRATIFIED TRAIN/TEST SPLIT =====
+    # Stratify on survival status to balance events
     train_df, test_df = train_test_split(
         final_df, test_size=test_size, random_state=SEED, stratify=final_df["OS_STATUS"]
     )
 
-    print("Split termine:")
+    print("Split completed:")
     print(
-        f"   Train: {len(train_df)} patients ({train_df['OS_STATUS'].mean():.1%} événements)"
+        f"   Train: {len(train_df)} patients ({train_df['OS_STATUS'].mean():.1%} events)"
     )
     print(
-        f"   Test:  {len(test_df)} patients ({test_df['OS_STATUS'].mean():.1%} événements)"
+        f"   Test:  {len(test_df)} patients ({test_df['OS_STATUS'].mean():.1%} events)"
     )
 
-    # ===== 6. PRÉPARER LES STRUCTURES DE SURVIE =====
-
-    # Créer les arrays structurés pour scikit-survival
+    # ===== 6. PREPARE SURVIVAL STRUCTURES =====
+    # Create structured arrays for scikit-survival
     train_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
     test_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
 
-    # Ajouter aux DataFrames pour compatibilité
+    # Add to DataFrames for compatibility
     train_df["y_survival"] = [train_y[i] for i in range(len(train_y))]
     test_df["y_survival"] = [test_y[i] for i in range(len(test_y))]
 
-    # ===== 7. MÉTADONNÉES =====
+    # ===== 7. METADATA COMPILATION =====
     metadata = {
         "n_patients_initial": len(clinical_df),
         "n_patients_final": len(final_df),
         "n_mutations": len(molecular_clean),
         "n_features": final_df.shape[1]
-        - 4,  # Moins ID, OS_YEARS, OS_STATUS, y_survival
+        - 4,  # Minus ID, OS_YEARS, OS_STATUS, y_survival
         "train_size": len(train_df),
         "test_size": len(test_df),
         "event_rate_train": train_df["OS_STATUS"].mean(),
@@ -406,30 +155,32 @@ def prepare_survival_dataset(
         "median_followup": final_df["OS_YEARS"].median(),
         "imputation_metadata": imputation_metadata,
         "feature_engineering": use_advanced_features,
+        "imputation_strategy": imputation_strategy.value,
     }
 
-    print("\nPREPARATION TERMINEE")
+    print("\nPREPARATION COMPLETED")
     print(
         f"   {metadata['n_patients_final']} patients, {metadata['n_features']} features"
     )
-    print(f"   {metadata['n_mutations']} mutations analysees")
-    print(f"   Suivi median: {metadata['median_followup']:.1f} ans")
+    print(f"   {metadata['n_mutations']} mutations analyzed")
+    print(f"   Median follow-up: {metadata['median_followup']:.1f} years")
 
     return train_df, test_df, metadata
 
 
 def get_survival_feature_sets() -> Dict[str, List[str]]:
     """
-    Définir des ensembles de features pour différents niveaux d'analyse
+    Define feature sets for different levels of analysis.
 
-    Returns:
-    --------
-    Dict : Ensembles de features organisés par complexité/usage clinique
+    Returns
+    -------
+    Dict[str, List[str]]
+        Feature sets organized by complexity/clinical usage
     """
-    clean_lists = features.get_clean_feature_lists()
+    clean_lists = get_clean_feature_lists()
 
     return {
-        # Ensemble minimal - pour usage clinique de routine
+        # Minimal set - for routine clinical use
         "clinical_minimal": [
             "BM_BLAST",
             "WBC",
@@ -440,7 +191,7 @@ def get_survival_feature_sets() -> Dict[str, List[str]]:
             "high_blast_count",
             "cytopenia_score",
         ],
-        # Ensemble ELN 2017 - standard pour pronostic LMA
+        # ELN 2017 standard - standard for AML prognosis
         "eln_standard": (
             clean_lists["clinical_base"]
             + clean_lists["cytogenetic"]
@@ -454,7 +205,7 @@ def get_survival_feature_sets() -> Dict[str, List[str]]:
             ]
             + ["eln_integrated_risk"]
         ),
-        # Ensemble complet - recherche/développement
+        # Complete set - research/development
         "research_complete": (
             clean_lists["clinical_base"]
             + clean_lists["clinical_ratios"]
@@ -466,7 +217,7 @@ def get_survival_feature_sets() -> Dict[str, List[str]]:
             + clean_lists["mutation_burden"]
             + clean_lists["integrated_scores"]
         ),
-        # Ensemble robuste - équilibre performance/interprétabilité
+        # Balanced set - performance/interpretability balance
         "robust_balanced": (
             [
                 "BM_BLAST",
@@ -499,79 +250,93 @@ def get_survival_feature_sets() -> Dict[str, List[str]]:
     }
 
 
-# ===== FONCTIONS DE COMPATIBILITÉ =====
+# ===== LEGACY COMPATIBILITY FUNCTIONS =====
 
 
 def prepare_enriched_dataset(
-    clinical_df,
-    molecular_df,
-    target_df=None,
+    clinical_df: pd.DataFrame,
+    molecular_df: pd.DataFrame,
+    target_df: Optional[pd.DataFrame] = None,
     imputer=None,
-    advanced_imputation_method="medical",
-    is_training=True,
-    save_to_file=None,
-):
+    advanced_imputation_method: str = "medical",
+    is_training: bool = True,
+    save_to_file: Optional[str] = None,
+) -> Union[Tuple[pd.DataFrame, Dict], pd.DataFrame]:
     """
-    Version de compatibilité avec l'ancien pipeline
+    Legacy compatibility function with the old pipeline.
 
-    Utilise le nouveau système d'imputation médicale par défaut,
-    mais peut revenir à l'ancien système si nécessaire.
+    Uses the new medical imputation system by default,
+    but can fall back to the old system if necessary.
 
-    Parameters:
-    -----------
-    clinical_df : DataFrame des données cliniques
-    molecular_df : DataFrame des données moléculaires
-    target_df : DataFrame des targets (optionnel pour test)
-    imputer : Imputer pré-entraîné (pour test)
-    advanced_imputation_method : Méthode d'imputation
-    is_training : Mode entraînement ou test
-    save_to_file : Chemin pour sauvegarder le dataset préparé (optionnel)
+    Parameters
+    ----------
+    clinical_df : pd.DataFrame
+        Clinical data
+    molecular_df : pd.DataFrame
+        Molecular data
+    target_df : pd.DataFrame, optional
+        Target data (optional for test)
+    imputer : optional
+        Pre-trained imputer (for test)
+    advanced_imputation_method : str
+        Imputation method
+    is_training : bool
+        Training or test mode
+    save_to_file : str, optional
+        Path to save prepared dataset
+
+    Returns
+    -------
+    Union[Tuple[pd.DataFrame, Dict], pd.DataFrame]
+        Prepared dataset and metadata (training) or just dataset (test)
     """
     if is_training:
-        # Nouveau pipeline pour l'entraînement
+        # New pipeline for training
         if target_df is not None:
-            # Si on a des targets, utiliser le pipeline complet mais sans split
+            # With targets, use complete pipeline but without split
             clinical_clean, molecular_clean, target_clean = clean_and_validate_data(
                 clinical_df, molecular_df, target_df
             )
 
             # Feature engineering
-            clinical_features = features.create_clinical_features(clinical_clean)
-            cyto_features = features.extract_cytogenetic_risk_features(
-                clinical_features
-            )
-            molecular_features = features.extract_molecular_risk_features(
+            clinical_features = create_clinical_features(clinical_clean)
+            cyto_features = extract_cytogenetic_risk_features(clinical_features)
+            molecular_features = extract_molecular_risk_features(
                 clinical_features, molecular_clean
             )
-            burden_features = features.create_molecular_burden_features(molecular_clean)
+            burden_features = create_molecular_burden_features(molecular_clean)
 
-            enriched_df = features.combine_all_features(
+            enriched_df = combine_all_features(
                 clinical_features, molecular_features, burden_features, cyto_features
             )
 
             # Imputation
+            strategy = (
+                ImputationStrategy.MEDICAL_INFORMED
+                if advanced_imputation_method == "medical"
+                else ImputationStrategy.MEDIAN
+            )
             enriched_df, imputation_metadata = intelligent_clinical_imputation(
-                enriched_df
+                enriched_df, strategy
             )
 
-            # Imputation finale pour éliminer tous les NaN
+            # Final imputation to eliminate all NaN
             numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
             enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
-            nan_count = enriched_df.isnull().sum().sum()
-            if nan_count > 0:
+            if enriched_df.isnull().sum().sum() > 0:
                 enriched_df = enriched_df.fillna(0)
 
-            # Merger avec les targets
+            # Merge with targets
             final_df = enriched_df.merge(target_clean, on="ID", how="inner")
 
-            # Sauvegarder si demandé
+            # Save if requested
             if save_to_file:
-                print(f"   Sauvegarde du dataset enrichi vers : {save_to_file}")
+                print(f"   Saving enriched dataset to: {save_to_file}")
                 final_df.to_csv(save_to_file, index=False)
 
             return final_df, imputation_metadata
         else:
-            # Version sans target (pour compatibilité)
+            # Version without target (for compatibility)
             clinical_clean, molecular_clean, _ = clean_and_validate_data(
                 clinical_df,
                 molecular_df,
@@ -580,98 +345,99 @@ def prepare_enriched_dataset(
                 ),
             )
 
-            clinical_features = features.create_clinical_features(clinical_clean)
-            cyto_features = features.extract_cytogenetic_risk_features(
-                clinical_features
-            )
-            molecular_features = features.extract_molecular_risk_features(
+            clinical_features = create_clinical_features(clinical_clean)
+            cyto_features = extract_cytogenetic_risk_features(clinical_features)
+            molecular_features = extract_molecular_risk_features(
                 clinical_features, molecular_clean
             )
-            burden_features = features.create_molecular_burden_features(molecular_clean)
+            burden_features = create_molecular_burden_features(molecular_clean)
 
-            enriched_df = features.combine_all_features(
+            enriched_df = combine_all_features(
                 clinical_features, molecular_features, burden_features, cyto_features
             )
 
+            strategy = (
+                ImputationStrategy.MEDICAL_INFORMED
+                if advanced_imputation_method == "medical"
+                else ImputationStrategy.MEDIAN
+            )
             enriched_df, imputation_metadata = intelligent_clinical_imputation(
-                enriched_df
+                enriched_df, strategy
             )
 
-            # Imputation finale pour éliminer tous les NaN
+            # Final imputation to eliminate all NaN
             numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
             enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
-            nan_count = enriched_df.isnull().sum().sum()
-            if nan_count > 0:
+            if enriched_df.isnull().sum().sum() > 0:
                 enriched_df = enriched_df.fillna(0)
 
-            # Sauvegarder si demandé
+            # Save if requested
             if save_to_file:
-                print(f"   Sauvegarde du dataset enrichi vers : {save_to_file}")
+                print(f"   Saving enriched dataset to: {save_to_file}")
                 enriched_df.to_csv(save_to_file, index=False)
 
             return enriched_df, imputation_metadata
     else:
-        # Mode test - utiliser l'imputer fourni (compatibilité)
+        # Test mode - use provided imputer (compatibility)
         if imputer is None:
-            raise ValueError("Imputer requis pour les données de test")
+            raise ValueError("Imputer required for test data")
 
-        # Pipeline simplifié pour le test
+        # Simplified pipeline for test
         enriched_df = clinical_df.copy()
 
-        # Appliquer les mêmes transformations qu'en training
-        clinical_features = features.create_clinical_features(enriched_df)
-        cyto_features = features.extract_cytogenetic_risk_features(clinical_features)
-        molecular_features = features.extract_molecular_risk_features(
+        # Apply same transformations as in training
+        clinical_features = create_clinical_features(enriched_df)
+        cyto_features = extract_cytogenetic_risk_features(clinical_features)
+        molecular_features = extract_molecular_risk_features(
             clinical_features, molecular_df
         )
-        burden_features = features.create_molecular_burden_features(molecular_df)
+        burden_features = create_molecular_burden_features(molecular_df)
 
-        enriched_df = features.combine_all_features(
+        enriched_df = combine_all_features(
             clinical_features, molecular_features, burden_features, cyto_features
         )
 
-        # Imputation finale pour éliminer tous les NaN
+        # Final imputation to eliminate all NaN
         numeric_cols = enriched_df.select_dtypes(include=[np.number]).columns
         enriched_df[numeric_cols] = enriched_df[numeric_cols].fillna(0)
-        nan_count = enriched_df.isnull().sum().sum()
-        if nan_count > 0:
+        if enriched_df.isnull().sum().sum() > 0:
             enriched_df = enriched_df.fillna(0)
 
-        # Imputation simple avec les métadonnées sauvegardées
+        # Simple imputation with saved metadata
         for col in imputer.get("columns_imputed", []):
             if col in enriched_df.columns and enriched_df[col].isna().any():
                 enriched_df[col] = enriched_df[col].fillna(enriched_df[col].median())
 
-        # Sauvegarder si demandé
+        # Save if requested
         if save_to_file:
-            print(f"   Sauvegarde du dataset de test enrichi vers : {save_to_file}")
+            print(f"   Saving test enriched dataset to: {save_to_file}")
             enriched_df.to_csv(save_to_file, index=False)
 
         return enriched_df
 
 
-def clean_target_data(target_df):
-    """Version de compatibilité"""
-    target_clean = target_df.copy()
-    target_clean.dropna(subset=["OS_YEARS", "OS_STATUS"], inplace=True)
-    target_clean["OS_YEARS"] = pd.to_numeric(target_clean["OS_YEARS"], errors="coerce")
-    target_clean["OS_STATUS"] = target_clean["OS_STATUS"].astype(bool)
-    return target_clean
+def clean_target_data(target_df: pd.DataFrame) -> pd.DataFrame:
+    """Legacy compatibility function for target data cleaning."""
+    from .data_cleaning.cleaner import _clean_survival_data
+
+    return _clean_survival_data(target_df)
 
 
-def prepare_features_and_target(df_enriched, target_df, test_size=0.2):
-    """Version de compatibilité avec l'ancien format"""
-    # Merger avec les targets
+def prepare_features_and_target(
+    df_enriched: pd.DataFrame, target_df: pd.DataFrame, test_size: float = 0.2
+):
+    """Legacy compatibility function with the old format."""
+    # Merge with targets
     final_df = df_enriched.merge(target_df, on="ID", how="inner")
 
-    # Nettoyer les colonnes dupliquées
+    # Clean duplicate columns
     if "OS_YEARS_y" in final_df.columns:
         final_df = final_df.drop(columns=["OS_YEARS_x", "OS_STATUS_x"])
         final_df = final_df.rename(
             columns={"OS_YEARS_y": "OS_YEARS", "OS_STATUS_y": "OS_STATUS"}
         )
 
-    # Split - utiliser la colonne de statut appropriée
+    # Split - use appropriate status column
     status_col = None
     for col in ["STATUS", "OS_STATUS", "Event", "event"]:
         if col in final_df.columns:
@@ -680,21 +446,21 @@ def prepare_features_and_target(df_enriched, target_df, test_size=0.2):
 
     if status_col is None:
         raise ValueError(
-            f"Aucune colonne de statut trouvée. Colonnes disponibles: {list(final_df.columns)}"
+            f"No status column found. Available columns: {list(final_df.columns)}"
         )
 
     train_df, test_df = train_test_split(
         final_df, test_size=test_size, random_state=SEED, stratify=final_df[status_col]
     )
 
-    # Préparer les features (exclure les colonnes de métadonnées)
+    # Prepare features (exclude metadata columns)
     exclude_cols = ["ID", "OS_YEARS", "OS_STATUS", "CENTER", "CYTOGENETICS"]
     feature_cols = [col for col in train_df.columns if col not in exclude_cols]
 
     X_train = train_df[feature_cols]
     X_test = test_df[feature_cols]
 
-    # Préparer les targets de survie
+    # Prepare survival targets
     y_train = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
     y_test = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
 
