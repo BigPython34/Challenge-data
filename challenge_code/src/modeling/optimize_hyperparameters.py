@@ -379,7 +379,7 @@ def optimize_random_survival_forest_hyperparameters_cv(
         else:
             # Fallback to old logic
             study_timestamp = study_basename.split("_")[-1].replace(".pkl", "")
-            
+
         log_path = os.path.join(
             MODEL_DIR, f"rsf_optimization_log_{study_timestamp}.log"
         )
