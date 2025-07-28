@@ -21,7 +21,8 @@ from typing import Dict, List, Tuple, Optional, Union
 from sklearn.model_selection import train_test_split
 from sksurv.util import Surv
 
-from ..config import SEED
+from ..config import SEED, FEATURE_LIST
+
 from .data_cleaning import (
     clean_and_validate_data,
     intelligent_clinical_imputation,
@@ -33,7 +34,6 @@ from .features import (
     extract_molecular_risk_features,
     create_molecular_burden_features,
     combine_all_features,
-    get_clean_feature_lists,
 )
 
 
@@ -177,7 +177,7 @@ def get_survival_feature_sets() -> Dict[str, List[str]]:
     Dict[str, List[str]]
         Feature sets organized by complexity/clinical usage
     """
-    clean_lists = get_clean_feature_lists()
+    clean_lists = FEATURE_LIST
 
     return {
         # Minimal set - for routine clinical use

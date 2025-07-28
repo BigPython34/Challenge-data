@@ -37,7 +37,7 @@ from src.data.load import load_all_data
 from src.data.prepare import prepare_survival_dataset
 from src.data.data_cleaning import ImputationStrategy
 from src.visualization.plots import plot_correlation_matrix
-from src.config import SEED
+from src.config import SEED, DATA_PREPARATION_CONFIG
 
 # Ignorer les warnings pendant le preprocessing
 warnings.filterwarnings("ignore")
@@ -65,72 +65,6 @@ def print_dataset_info(data: Dict[str, pd.DataFrame]) -> None:
             )
         else:
             print(f"• {name}: Non disponible ou vide")
-
-
-def create_data_preparation_config() -> Dict[str, Any]:
-    """
-    Configuration avancée pour la préparation des données.
-
-    Returns:
-        Dict: Configuration complète du pipeline de données
-    """
-    return {
-        "pipeline": {
-            "test_size": 0.3,  # Plus grande validation pour plus de robustesse
-            "use_advanced_features": True,
-            "include_molecular_burden": True,
-            "include_cytogenetic_features": True,
-            "include_interaction_features": True,
-        },
-        "imputation": {
-            "strategy": "medical_informed",  # medical_informed, median, mean, knn, iterative, regression
-            "fill_missing_with_zero": ["mutations", "molecular"],
-            "fill_missing_with_median": ["clinical_numeric"],
-            "fill_missing_with_mode": ["clinical_categorical"],
-        },
-        "feature_engineering": {
-            "clinical": {
-                "create_ratios": True,
-                "create_thresholds": True,
-                "create_composite_scores": True,
-                "create_log_transforms": True,
-            },
-            "molecular": {
-                "extract_binary_mutations": True,
-                "extract_vaf_features": True,
-                "extract_mutation_types": True,
-                "extract_comutation_patterns": True,
-                "extract_pathway_alterations": True,
-            },
-            "cytogenetic": {
-                "extract_eln2022_abnormalities": True,
-                "calculate_complexity": True,
-                "extract_chromosome_features": True,
-                "calculate_risk_scores": True,
-            },
-            "integrated": {
-                "create_eln2022_risk_scores": True,
-                "create_interaction_features": True,
-                "create_comprehensive_scores": True,
-            },
-        },
-        "quality_control": {
-            "remove_low_variance_features": True,
-            "variance_threshold": 0.01,
-            "remove_highly_correlated": True,
-            "correlation_threshold": 0.95,
-            "handle_outliers": True,
-            "outlier_method": "clip",  # clip, remove, transform
-        },
-        "output": {
-            "save_datasets": True,
-            "save_metadata": True,
-            "save_feature_importance": True,
-            "create_visualizations": True,
-            "datasets_dir": "datasets",
-            "models_dir": "models",
-        },
-    }
 
 
 def validate_input_data(data: Dict[str, pd.DataFrame]) -> None:
@@ -235,9 +169,7 @@ def prepare_training_data(
     return dataset_train, dataset_test, pipeline_metadata
 
 
-def prepare_test_data(
-    data: Dict[str, pd.DataFrame], pipeline_metadata: Dict, config: Dict[str, Any]
-) -> pd.DataFrame:
+def prepare_test_data(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
     Prépare les données de test en appliquant les mêmes transformations SANS supprimer de patients.
 
@@ -822,7 +754,7 @@ def main():
 
     # Configuration
     set_seed()
-    config = create_data_preparation_config()
+    config = DATA_PREPARATION_CONFIG
 
     try:
         # 1. Chargement et validation des données
@@ -839,7 +771,7 @@ def main():
 
         # 3. Préparation des données de test
         print("\n=== ÉTAPE 3/6 : PRÉPARATION TEST ===")
-        dataset_test_final = prepare_test_data(data, pipeline_metadata, config)
+        dataset_test_final = prepare_test_data(data)
 
         # 4. Contrôle qualité
         print("\n=== ÉTAPE 4/6 : CONTRÔLE QUALITÉ ===")
