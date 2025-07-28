@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Script d'optimisation des hyperparamètres
-Optimise les hyperparamètres des modèles Gradient Boosting et Random Survival Forest
+Script d'optimisation des hyperparamètres - RSF INTENSIF
+Optimise intensivement les hyperparamètres du Random Survival Forest
 """
 import pickle
 import os
-from src.modeling.optimize_hyperparameters import optimize_both_models
-from src.utils.helpers import set_seed
+from src.modeling.optimize_hyperparameters import (
+    resume_or_start_rsf_optimization,
+)
 
 
 def main():
-    """Optimise les hyperparamètres des modèles de survie"""
-    print("=== OPTIMISATION DES HYPERPARAMETRES ===")
-    print("Objectif : Optimiser GB et RSF avec Optuna")
+    """Optimise intensivement les hyperparamètres du Random Survival Forest"""
+    print("=== OPTIMISATION INTENSIVE RSF ===")
+    print("Objectif : Optimiser RSF avec recherche intensive")
     print("=" * 50)
 
     # 1. Chargement du dataset
@@ -39,41 +40,36 @@ def main():
 
     # Extraction des données
     X_train = dataset["X_train"]
-    X_test = dataset["X_test"]
     y_train = dataset["y_train"]
-    y_test = dataset["y_test"]
 
     # 2. Configuration de l'optimisation
-    print("\n2. Configuration de l'optimisation...")
-    n_trials = 200  # Optimisation intensive - environ 5-6h au total
+    print("\n2. Configuration de l'optimisation RSF intensive...")
+    n_trials = 300  # Optimisation très intensive pour RSF
     n_splits = 5  # Validation croisée 5-fold
 
-    print(f"   Nombre d'essais par modèle : {n_trials}")
+    print(f"   Nombre d'essais RSF : {n_trials}")
     print(f"   Validation croisée : {n_splits} folds")
-    print(f"   Estimation du temps : 5-6 heures")
-    print(
-        f"   Total d'évaluations : {n_trials * 2 * n_splits} = {n_trials * 2 * n_splits}"
-    )
-    print(f"   (2 modèles × {n_trials} trials × {n_splits} folds)")
-    print("   🔥 OPTIMISATION INTENSIVE ACTIVÉE 🔥")
+    print(f"   Estimation du temps : 3-4 heures")
+    print(f"   Total d'évaluations : {n_trials * n_splits} = {n_trials * n_splits}")
+    print(f"   ({n_trials} trials × {n_splits} folds)")
+    print("   🔥 OPTIMISATION RSF INTENSIVE ACTIVÉE 🔥")
 
-    # 3. Optimisation des hyperparamètres
-    print("\n3. Lancement de l'optimisation...")
+    # 3. Optimisation intensive du RSF
+    print("\n3. Lancement de l'optimisation RSF intensive...")
+    print("🔍 Recherche d'optimisations existantes...")
+
     try:
-        optimization_results = optimize_both_models(
+        best_params, best_score, csv_path = resume_or_start_rsf_optimization(
             X_train=X_train, y_train=y_train, n_trials=n_trials, n_splits=n_splits
         )
 
         print("\n" + "=" * 50)
-        print("✅ OPTIMISATION TERMINÉE AVEC SUCCÈS")
+        print("✅ OPTIMISATION RSF TERMINÉE AVEC SUCCÈS")
         print("=" * 50)
-        print(f"Meilleur modèle : {optimization_results['best_model']}")
-        print(
-            f"Score CV du meilleur modèle : {optimization_results[optimization_results['best_model']]['score']:.5f}"
-        )
-        print(
-            "\n📊 Fichiers CSV générés avec tous les résultats d'optimisation dans le dossier 'models/'"
-        )
+        print(f"Meilleur score RSF : {best_score:.5f}")
+        print(f"Meilleurs paramètres RSF : {best_params}")
+        if csv_path:
+            print(f"Fichier CSV généré : {csv_path}")
 
     except Exception as e:
         print(f"\nERREUR lors de l'optimisation : {e}")
