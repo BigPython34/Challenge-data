@@ -1,20 +1,3 @@
-"""
-Data preparation orchestrator for AML survival analysis.
-
-This module serves as the main orchestrator for data preparation, coordinating
-between specialized modules for cleaning, imputation, and feature engineering.
-
-Main functions:
-- prepare_survival_dataset: Complete pipeline for survival analysis
-- prepare_enriched_dataset: Legacy compatibility function
-- get_survival_feature_sets: Predefined feature sets for different use cases
-
-Architecture:
-- Data cleaning: src.data.data_cleaning
-- Feature engineering: src.data.features
-- Coordination and integration: this module
-"""
-
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
@@ -23,149 +6,147 @@ from sksurv.util import Surv
 
 from ..config import SEED, FEATURE_LIST
 
-from .data_cleaning import (
-    clean_and_validate_data,
-    intelligent_clinical_imputation,
-    ImputationStrategy,
-)
-from .features import (
-    create_clinical_features,
-    extract_cytogenetic_risk_features,
-    extract_molecular_risk_features,
-    create_molecular_burden_features,
-    combine_all_features,
+from .data_cleaning.cleaner import clean_and_validate_data
+from .data_cleaning.imputer import ClinicalImputer, ImputationStrategy
+
+from .features.feature_engineering import (
+    ClinicalFeatureEngineering,
+    CytogeneticFeatureExtraction,
+    MolecularFeatureExtraction,
+    IntegratedFeatureEngineering,
 )
 
 
-def prepare_survival_dataset(
-    clinical_df: pd.DataFrame,
-    molecular_df: pd.DataFrame,
-    target_df: pd.DataFrame,
-    test_size: float = 0.2,
-    use_advanced_features: bool = True,
-    imputation_strategy: ImputationStrategy = ImputationStrategy.MEDICAL_INFORMED,
-) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+class DataPreparationPipeline:
     """
-    Complete pipeline for survival dataset preparation.
-
-    This function orchestrates the entire data preparation process:
-    1. Data cleaning and validation
-    2. Medical feature engineering
-    3. Intelligent imputation
-    4. Train/test split
-    5. Survival target preparation
-
-    Parameters
-    ----------
-    clinical_df, molecular_df, target_df : pd.DataFrame
-        Raw input dataframes
-    test_size : float
-        Proportion for test set
-    use_advanced_features : bool
-        Whether to use advanced feature engineering
-    imputation_strategy : ImputationStrategy
-        Strategy for handling missing values
-
-    Returns
-    -------
-    Tuple[pd.DataFrame, pd.DataFrame, Dict]
-        train_df, test_df, metadata
+    Modular pipeline for AML survival dataset preparation.
     """
-    print("🏥 === AML SURVIVAL DATASET PREPARATION ===")
 
-    # ===== 1. DATA CLEANING AND VALIDATION =====
-    clinical_clean, molecular_clean, target_clean = clean_and_validate_data(
-        clinical_df, molecular_df, target_df
-    )
+    def __init__(self, test_size: float = 0.2, seed: int = SEED):
+        self.test_size = test_size
+        self.seed = seed
 
-    # ===== 2. MEDICAL FEATURE ENGINEERING =====
-    if use_advanced_features:
-        print("\n=== MEDICAL FEATURE ENGINEERING ===")
+    def clean_data(
+        self,
+        clinical_df: pd.DataFrame,
+        molecular_df: pd.DataFrame,
+        target_df: pd.DataFrame,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Clean and validate clinical, molecular, and target data.
+        """
+        return clean_and_validate_data(clinical_df, molecular_df, target_df)
 
-        # Clinical features
-        clinical_features = create_clinical_features(clinical_clean)
-        print(f"Clinical features: {len(clinical_features.columns)} variables")
-
-        # Cytogenetic features
-        cyto_features = extract_cytogenetic_risk_features(clinical_features)
-        print(f"Cytogenetic features: {len(cyto_features.columns)} variables")
-
-        # Molecular features
-        molecular_features = extract_molecular_risk_features(
+    def feature_engineering(
+        self, clinical_clean: pd.DataFrame, molecular_clean: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Perform feature engineering using updated feature engineering modules.
+        """
+        clinical_features = ClinicalFeatureEngineering.create_clinical_features(
+            clinical_clean
+        )
+        cyto_features = CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
+            clinical_features
+        )
+        molecular_features = MolecularFeatureExtraction.extract_molecular_risk_features(
             clinical_features, molecular_clean
         )
-        burden_features = create_molecular_burden_features(molecular_clean)
-        print(
-            f"Molecular features: {len(molecular_features.columns)} + {len(burden_features.columns)} variables"
+        burden_features = MolecularFeatureExtraction.create_molecular_burden_features(
+            molecular_clean
         )
 
-        # Combine all features
-        enriched_df = combine_all_features(
+        enriched_df = IntegratedFeatureEngineering.combine_all_features(
             clinical_features, molecular_features, burden_features, cyto_features
         )
-        print(f"Enriched dataset: {enriched_df.shape}")
 
-    else:
-        # Simple version
-        enriched_df = clinical_clean.copy()
+        return enriched_df
 
-    # ===== 3. INTELLIGENT IMPUTATION =====
-    enriched_df, imputation_metadata = intelligent_clinical_imputation(
-        enriched_df, strategy=imputation_strategy
-    )
+    def impute_data(self, enriched_df: pd.DataFrame, strategy: ImputationStrategy):
+        """
+        Impute missing data using intelligent clinical imputation.
+        """
+        return ClinicalImputer.intelligent_clinical_imputation(enriched_df, strategy)
 
-    # ===== 4. MERGE WITH TARGETS =====
-    final_df = enriched_df.merge(target_clean, on="ID", how="inner")
-    print(f"Final dataset: {final_df.shape}")
+    def split_data(self, final_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Split data into training and test sets.
+        """
+        train_df, test_df = train_test_split(
+            final_df,
+            test_size=self.test_size,
+            random_state=self.seed,
+            stratify=final_df["OS_STATUS"],
+        )
+        return train_df, test_df
 
-    # ===== 5. STRATIFIED TRAIN/TEST SPLIT =====
-    # Stratify on survival status to balance events
-    train_df, test_df = train_test_split(
-        final_df, test_size=test_size, random_state=SEED, stratify=final_df["OS_STATUS"]
-    )
+    def prepare_survival_targets(
+        self, train_df: pd.DataFrame, test_df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Prepare survival targets for training and test sets.
+        """
+        train_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
+        test_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
+        train_df["y_survival"] = [train_y[i] for i in range(len(train_y))]
+        test_df["y_survival"] = [test_y[i] for i in range(len(test_y))]
+        return train_df, test_df
 
-    print("Split completed:")
-    print(
-        f"   Train: {len(train_df)} patients ({train_df['OS_STATUS'].mean():.1%} events)"
-    )
-    print(
-        f"   Test:  {len(test_df)} patients ({test_df['OS_STATUS'].mean():.1%} events)"
-    )
+    def prepare_survival_dataset(
+        self,
+        clinical_df: pd.DataFrame,
+        molecular_df: pd.DataFrame,
+        target_df: pd.DataFrame,
+        use_advanced_features: bool = True,
+        imputation_strategy: ImputationStrategy = ImputationStrategy.MEDICAL_INFORMED,
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+        """
+        Complete pipeline for preparing AML survival dataset.
+        """
+        print("🏥 === AML SURVIVAL DATASET PREPARATION ===")
 
-    # ===== 6. PREPARE SURVIVAL STRUCTURES =====
-    # Create structured arrays for scikit-survival
-    train_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", train_df)
-    test_y = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
+        clinical_clean, molecular_clean, target_clean = self.clean_data(
+            clinical_df, molecular_df, target_df
+        )
 
-    # Add to DataFrames for compatibility
-    train_df["y_survival"] = [train_y[i] for i in range(len(train_y))]
-    test_df["y_survival"] = [test_y[i] for i in range(len(test_y))]
+        if use_advanced_features:
+            enriched_df = self.feature_engineering(clinical_clean, molecular_clean)
+        else:
+            enriched_df = clinical_clean.copy()
 
-    # ===== 7. METADATA COMPILATION =====
-    metadata = {
-        "n_patients_initial": len(clinical_df),
-        "n_patients_final": len(final_df),
-        "n_mutations": len(molecular_clean),
-        "n_features": final_df.shape[1]
-        - 4,  # Minus ID, OS_YEARS, OS_STATUS, y_survival
-        "train_size": len(train_df),
-        "test_size": len(test_df),
-        "event_rate_train": train_df["OS_STATUS"].mean(),
-        "event_rate_test": test_df["OS_STATUS"].mean(),
-        "median_followup": final_df["OS_YEARS"].median(),
-        "imputation_metadata": imputation_metadata,
-        "feature_engineering": use_advanced_features,
-        "imputation_strategy": imputation_strategy.value,
-    }
+        enriched_df, imputation_metadata = self.impute_data(
+            enriched_df, imputation_strategy
+        )
 
-    print("\nPREPARATION COMPLETED")
-    print(
-        f"   {metadata['n_patients_final']} patients, {metadata['n_features']} features"
-    )
-    print(f"   {metadata['n_mutations']} mutations analyzed")
-    print(f"   Median follow-up: {metadata['median_followup']:.1f} years")
+        final_df = enriched_df.merge(target_clean, on="ID", how="inner")
 
-    return train_df, test_df, metadata
+        train_df, test_df = self.split_data(final_df)
+
+        train_df, test_df = self.prepare_survival_targets(train_df, test_df)
+
+        metadata = {
+            "n_patients_initial": len(clinical_df),
+            "n_patients_final": len(final_df),
+            "n_mutations": len(molecular_clean),
+            "n_features": final_df.shape[1] - 4,
+            "train_size": len(train_df),
+            "test_size": len(test_df),
+            "event_rate_train": train_df["OS_STATUS"].mean(),
+            "event_rate_test": test_df["OS_STATUS"].mean(),
+            "median_followup": final_df["OS_YEARS"].median(),
+            "imputation_metadata": imputation_metadata,
+            "feature_engineering": use_advanced_features,
+            "imputation_strategy": imputation_strategy.value,
+        }
+
+        print("\nPREPARATION COMPLETED")
+        print(
+            f"   {metadata['n_patients_final']} patients, {metadata['n_features']} features"
+        )
+        print(f"   {metadata['n_mutations']} mutations analyzed")
+        print(f"   Median follow-up: {metadata['median_followup']:.1f} years")
+
+        return train_df, test_df, metadata
 
 
 def get_survival_feature_sets() -> Dict[str, List[str]]:
@@ -299,25 +280,33 @@ def prepare_enriched_dataset(
             )
 
             # Feature engineering
-            clinical_features = create_clinical_features(clinical_clean)
-            cyto_features = extract_cytogenetic_risk_features(clinical_features)
-            molecular_features = extract_molecular_risk_features(
-                clinical_features, molecular_clean
+            clinical_features = ClinicalFeatureEngineering.create_clinical_features(
+                clinical_clean
             )
-            burden_features = create_molecular_burden_features(molecular_clean)
+            cyto_features = (
+                CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
+                    clinical_features
+                )
+            )
+            molecular_features = (
+                MolecularFeatureExtraction.extract_molecular_risk_features(
+                    clinical_features, molecular_clean
+                )
+            )
+            burden_features = (
+                MolecularFeatureExtraction.create_molecular_burden_features(
+                    molecular_clean
+                )
+            )
 
-            enriched_df = combine_all_features(
+            enriched_df = IntegratedFeatureEngineering.combine_all_features(
                 clinical_features, molecular_features, burden_features, cyto_features
             )
 
             # Imputation
-            strategy = (
-                ImputationStrategy.MEDICAL_INFORMED
-                if advanced_imputation_method == "medical"
-                else ImputationStrategy.MEDIAN
-            )
-            enriched_df, imputation_metadata = intelligent_clinical_imputation(
-                enriched_df, strategy
+            strategy = ImputationStrategy[advanced_imputation_method.upper()]
+            enriched_df, imputation_metadata = (
+                ClinicalImputer.intelligent_clinical_imputation(enriched_df, strategy)
             )
 
             # Final imputation to eliminate all NaN
@@ -345,24 +334,32 @@ def prepare_enriched_dataset(
                 ),
             )
 
-            clinical_features = create_clinical_features(clinical_clean)
-            cyto_features = extract_cytogenetic_risk_features(clinical_features)
-            molecular_features = extract_molecular_risk_features(
-                clinical_features, molecular_clean
+            clinical_features = ClinicalFeatureEngineering.create_clinical_features(
+                clinical_clean
             )
-            burden_features = create_molecular_burden_features(molecular_clean)
+            cyto_features = (
+                CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
+                    clinical_features
+                )
+            )
+            molecular_features = (
+                MolecularFeatureExtraction.extract_molecular_risk_features(
+                    clinical_features, molecular_clean
+                )
+            )
+            burden_features = (
+                MolecularFeatureExtraction.create_molecular_burden_features(
+                    molecular_clean
+                )
+            )
 
-            enriched_df = combine_all_features(
+            enriched_df = IntegratedFeatureEngineering.combine_all_features(
                 clinical_features, molecular_features, burden_features, cyto_features
             )
 
-            strategy = (
-                ImputationStrategy.MEDICAL_INFORMED
-                if advanced_imputation_method == "medical"
-                else ImputationStrategy.MEDIAN
-            )
-            enriched_df, imputation_metadata = intelligent_clinical_imputation(
-                enriched_df, strategy
+            strategy = ImputationStrategy[advanced_imputation_method.upper()]
+            enriched_df, imputation_metadata = (
+                ClinicalImputer.intelligent_clinical_imputation(enriched_df, strategy)
             )
 
             # Final imputation to eliminate all NaN
@@ -386,14 +383,20 @@ def prepare_enriched_dataset(
         enriched_df = clinical_df.copy()
 
         # Apply same transformations as in training
-        clinical_features = create_clinical_features(enriched_df)
-        cyto_features = extract_cytogenetic_risk_features(clinical_features)
-        molecular_features = extract_molecular_risk_features(
+        clinical_features = ClinicalFeatureEngineering.create_clinical_features(
+            enriched_df
+        )
+        cyto_features = CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
+            clinical_features
+        )
+        molecular_features = MolecularFeatureExtraction.extract_molecular_risk_features(
             clinical_features, molecular_df
         )
-        burden_features = create_molecular_burden_features(molecular_df)
+        burden_features = MolecularFeatureExtraction.create_molecular_burden_features(
+            molecular_df
+        )
 
-        enriched_df = combine_all_features(
+        enriched_df = IntegratedFeatureEngineering.combine_all_features(
             clinical_features, molecular_features, burden_features, cyto_features
         )
 
@@ -414,13 +417,6 @@ def prepare_enriched_dataset(
             enriched_df.to_csv(save_to_file, index=False)
 
         return enriched_df
-
-
-def clean_target_data(target_df: pd.DataFrame) -> pd.DataFrame:
-    """Legacy compatibility function for target data cleaning."""
-    from .data_cleaning.cleaner import _clean_survival_data
-
-    return _clean_survival_data(target_df)
 
 
 def prepare_features_and_target(
@@ -465,3 +461,39 @@ def prepare_features_and_target(
     y_test = Surv.from_dataframe("OS_STATUS", "OS_YEARS", test_df)
 
     return X_train, X_test, y_train, y_test, feature_cols
+
+
+def prepare_test_data(data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Prepares test data by applying transformations without removing patients.
+
+    Args:
+        data: Raw test data.
+
+    Returns:
+        DataFrame: Prepared test data.
+    """
+    print("\n=== PREPARING TEST DATA ===")
+
+    clinical_features = ClinicalFeatureEngineering.create_clinical_features(
+        data["clinical_test"]
+    )
+    cyto_features = CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
+        data["clinical_test"]
+    )
+    molecular_features = MolecularFeatureExtraction.extract_molecular_risk_features(
+        data["clinical_test"], data["molecular_test"]
+    )
+    burden_features = MolecularFeatureExtraction.create_molecular_burden_features(
+        data["molecular_test"]
+    )
+
+    dataset_test = IntegratedFeatureEngineering.combine_all_features(
+        clinical_features, molecular_features, burden_features, cyto_features
+    )
+
+    dataset_test, _ = ClinicalImputer.intelligent_clinical_imputation(
+        dataset_test, strategy=ImputationStrategy.MEDICAL_INFORMED
+    )
+
+    return dataset_test

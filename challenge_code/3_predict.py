@@ -50,7 +50,7 @@ def predict_and_submit(selected_model=None):
     # 2. Chargement des données de test enrichies
     print("\n2. Chargement des données de test...")
 
-    enriched_test_path = "datasets/enriched_test.csv"
+    enriched_test_path = "datasets/engineered_features_test.csv"
     if not os.path.exists(enriched_test_path):
         print(f"ERREUR : Dataset enrichi de test introuvable : {enriched_test_path}")
         print("Veuillez d'abord exécuter le script de préparation des données.")

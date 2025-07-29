@@ -119,33 +119,33 @@ COX_PARAMS = {
 """
 
 RSF_PARAMS = {
-    "n_estimators": 250,  # Augmentation pour plus de stabilité
-    "min_samples_split": 36,  # Augmentation pour plus de régularisation
-    "min_samples_leaf": 8,  # Augmentation pour plus de régularisation
-    "max_depth": 11,  # Légère augmentation mais toujours contrôlé
-    "max_features": 0.5,
+    "n_estimators": 600,
+    "min_samples_split": 36,
+    "min_samples_leaf": 8,
+    "max_depth": 11,
 }
 
-
+"""
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 1,  # Réduction de 850 à 300
-    "learning_rate": 0.013235192937383306,  # Augmentation pour plus de stabilité
+    "n_estimators": 1000,
+    "learning_rate": 0.01323,
     "max_depth": 6,
-    "subsample": 0.4117261899723177,  # Sous-échantillonnage pour réduire l'overfitting
-    "min_samples_leaf": 37,  # Augmentation pour plus de régularisation
-    "min_samples_split": 160,  # Augmentation pour plus de régularisation
+    "subsample": 0.4117,
+    "min_samples_leaf": 37,
+    "min_samples_split": 160,
 }
 """
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 300,  # Réduction de 850 à 300
-    "learning_rate": 0.1,  # Augmentation pour plus de stabilité
+    "n_estimators": 60,
+    "learning_rate": 0.1,
     "max_depth": 3,
-    "subsample": 0.8,  # Sous-échantillonnage pour réduire l'overfitting
-    "min_samples_leaf": 15,  # Augmentation pour plus de régularisation
-    "min_samples_split": 30,  # Augmentation pour plus de régularisation
+    "subsample": 0.8,
+    "min_samples_leaf": 15,
+    "min_samples_split": 30,
 }
-0,7545788740320561 best
-"""
+# 0,7545788740320561 best
+
+
 # Parameters for CoxNet (Cox with regularization)
 COXNET_PARAMS = {
     "l1_ratio": 0.9,  # Balance between L1 and L2 (0.9 = mainly L1)
@@ -157,7 +157,7 @@ COXNET_PARAMS = {
 
 # Parameters for Extra Survival Trees
 EXTRA_TREES_PARAMS = {
-    "n_estimators": 100,
+    "n_estimators": 10,
     "min_samples_split": 6,
     "min_samples_leaf": 3,
     "max_depth": 10,
@@ -166,8 +166,8 @@ EXTRA_TREES_PARAMS = {
 
 # Parameters for Componentwise Gradient Boosting
 COMPONENTWISE_GB_PARAMS = {
-    "n_estimators": 100,
-    "learning_rate": 0.1,
+    "n_estimators": 10,
+    "learning_rate": 0.05,
     "subsample": 1.0,
 }
 

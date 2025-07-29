@@ -14,7 +14,10 @@ from sksurv.ensemble import (
 )
 from sksurv.linear_model import CoxPHSurvivalAnalysis, CoxnetSurvivalAnalysis
 from sksurv.metrics import concordance_index_ipcw
+from sksurv.util import Surv
 import warnings
+import pickle
+from src.modeling.evaluate import compare_models
 
 # PyCox imports
 try:
@@ -50,23 +53,23 @@ class PyCoxWrapper:
         self.labtrans = labtrans
 
     def predict(self, X):
-        """Prédiction compatible avec scikit-survival"""
+        """Prediction compatible with scikit-survival"""
         X_np = X.values if hasattr(X, "values") else X
         X_scaled = self.scaler.transform(X_np).astype(np.float32)
 
-        # Prédiction des log hazards
+        # Prediction of log hazards
         log_h = self.model.predict(X_scaled)
         return log_h.flatten()
 
     def predict_surv_df(self, X):
-        """Prédiction des courbes de survie (méthode PyCox)"""
+        """Prediction of survival curves (PyCox method)"""
         X_np = X.values if hasattr(X, "values") else X
         X_scaled = self.scaler.transform(X_np).astype(np.float32)
         return self.model.predict_surv_df(X_scaled)
 
 
 def train_cox_model(X_train, y_train, alpha=None):
-    """Entraîne un modèle Cox Proportional Hazards avec paramètres du config"""
+    """Train a Cox Proportional Hazards model with config parameters"""
     if alpha is None:
         alpha = COX_PARAMS["alpha"]
     cox = CoxPHSurvivalAnalysis(alpha=alpha)
@@ -82,7 +85,7 @@ def train_rsf_model(
     min_samples_leaf=None,
     max_depth=None,
 ):
-    """Entraîne un modèle Random Survival Forest avec paramètres du config"""
+    """Train a Random Survival Forest model with config parameters"""
     n_estimators = (
         n_estimators if n_estimators is not None else RSF_PARAMS["n_estimators"]
     )
@@ -118,7 +121,7 @@ def train_gradient_boosting_model(
     min_samples_leaf=None,
     min_samples_split=None,
 ):
-    """Entraîne un modèle Gradient Boosting Survival Analysis avec paramètres du config"""
+    """Train a Gradient Boosting Survival Analysis model with config parameters"""
     n_estimators = (
         n_estimators
         if n_estimators is not None
@@ -159,7 +162,7 @@ def train_gradient_boosting_model(
 
 
 def train_coxnet_model(X_train, y_train, l1_ratio=None, n_alphas=None, max_iter=None):
-    """Entraîne un modèle Cox avec régularisation élastique (CoxNet)"""
+    """Train a Cox model with elastic net regularization (CoxNet)"""
     l1_ratio = l1_ratio if l1_ratio is not None else COXNET_PARAMS["l1_ratio"]
     n_alphas = n_alphas if n_alphas is not None else COXNET_PARAMS["n_alphas"]
     max_iter = max_iter if max_iter is not None else COXNET_PARAMS["max_iter"]
@@ -183,7 +186,7 @@ def train_extra_trees_model(
     max_depth=None,
     max_features=None,
 ):
-    """Entraîne un modèle Extra Survival Trees"""
+    """Train an Extra Survival Trees model"""
     n_estimators = (
         n_estimators if n_estimators is not None else EXTRA_TREES_PARAMS["n_estimators"]
     )
@@ -217,7 +220,7 @@ def train_extra_trees_model(
 def train_componentwise_gb_model(
     X_train, y_train, n_estimators=None, learning_rate=None, subsample=None
 ):
-    """Entraîne un modèle Componentwise Gradient Boosting"""
+    """Train a Componentwise Gradient Boosting model"""
     n_estimators = (
         n_estimators
         if n_estimators is not None
@@ -243,7 +246,7 @@ def train_componentwise_gb_model(
 
 
 def save_model(model, model_name, params=None):
-    """Sauvegarde un modèle avec un nom basé sur ses paramètres"""
+    """Save a model with a name based on its parameters"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if params:
@@ -256,33 +259,164 @@ def save_model(model, model_name, params=None):
     os.makedirs(MODEL_DIR, exist_ok=True)
 
     joblib.dump(model, filepath)
-    print(f"Modèle sauvegardé: {filepath}")
+    print(f"Model saved: {filepath}")
     return filepath
 
 
 def load_model(filepath):
-    """Charge un modèle sauvegardé"""
+    """Load a saved model"""
     return joblib.load(filepath)
 
 
+def load_training_dataset(dataset_path):
+    """Load the prepared training dataset."""
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(
+            f"ERROR: Prepared dataset not found! Expected file: {dataset_path}. Please run: python 1_prepare_data.py first."
+        )
+
+    with open(dataset_path, "rb") as f:
+        dataset = pickle.load(f)
+
+    print("Dataset successfully loaded")
+    print(f"{dataset['metadata']['n_samples_train']} training samples")
+    print(f"{dataset['metadata']['n_features']} features")
+
+    return dataset
+
+
+def load_training_dataset_csv(X_train_path, y_train_path):
+    """Load the training dataset from CSV files."""
+    if not os.path.exists(X_train_path) or not os.path.exists(y_train_path):
+        raise FileNotFoundError(
+            f"ERROR: Training dataset files not found! Expected files: {X_train_path}, {y_train_path}."
+        )
+
+    X_train = pd.read_csv(X_train_path)
+    y_train = pd.read_csv(y_train_path)
+
+    # Exclude patient IDs from X_train
+    if "ID" in X_train.columns:
+        X_train = X_train.drop(columns=["ID"])
+    if "ID" in y_train.columns:
+        y_train = y_train.drop(columns=["ID"])
+
+    # Convert y_train to structured array
+    if "OS_STATUS" in y_train.columns and "OS_YEARS" in y_train.columns:
+        y_train = Surv.from_arrays(
+            event=y_train["OS_STATUS"].astype(bool),
+            time=y_train["OS_YEARS"].astype(float),
+        )
+    else:
+        raise ValueError(
+            "ERROR: y_train must contain 'OS_STATUS' and 'OS_YEARS' columns."
+        )
+
+    print("Training dataset successfully loaded")
+    print(f"{X_train.shape[0]} training samples")
+    print(f"{X_train.shape[1]} features")
+
+    return X_train, y_train
+
+
+def evaluate_and_save_best_model(models, X_train, y_train, X_test, y_test, features):
+    """Evaluate models, select the best one, and save all relevant data."""
+
+    print("Evaluating models...")
+    results, best_model_name = compare_models(models, X_train, y_train, X_test, y_test)
+
+    print("Evaluation completed")
+    print(f"Best model: {best_model_name}")
+
+    # Display model performances
+    print("Model performances:")
+    for model_name, metrics in results.items():
+        if "test_accuracy" in metrics:
+            print(f"  • {model_name}: {metrics['test_accuracy']:.3f}")
+
+    # Save complete model package
+    print("Saving model package...")
+    os.makedirs("models", exist_ok=True)
+
+    model_package = {
+        "best_model": models[best_model_name],
+        "best_model_name": best_model_name,
+        "all_models": models,
+        "evaluation_results": results,
+        "features": features,
+        "imputer": None,  # Placeholder for imputer if available
+        "training_metadata": {
+            "training_date": pd.Timestamp.now().isoformat(),
+            "n_training_samples": len(X_train),
+            "n_features": len(features),
+            "best_model_accuracy": results[best_model_name].get("test_accuracy", "N/A"),
+            "feature_names": features,
+        },
+    }
+
+    package_path = "models/model_package.pkl"
+    with open(package_path, "wb") as f:
+        pickle.dump(model_package, f)
+
+    print(f"Model package saved: {package_path}")
+
+    # Save the best model alone
+    best_model_path = "models/best_model.joblib"
+    joblib.dump(models[best_model_name], best_model_path)
+    print(f"Best model saved: {best_model_path}")
+
+    # Save readable metadata
+    metadata_path = "models/model_info.txt"
+    with open(metadata_path, "w") as f:
+        f.write("=== TRAINED MODEL INFORMATION ===\n")
+        f.write(
+            f"Training date: {model_package['training_metadata']['training_date']}\n"
+        )
+        f.write(f"Best model: {best_model_name}\n")
+        f.write(f"Accuracy: {results[best_model_name].get('test_accuracy', 'N/A')}\n")
+        f.write(f"Training samples: {len(X_train)}\n")
+        f.write(f"Number of features: {len(features)}\n")
+        f.write("\nPerformance of all models:\n")
+        for model_name, metrics in results.items():
+            if "test_accuracy" in metrics:
+                f.write(f"  • {model_name}: {metrics['test_accuracy']:.3f}\n")
+
+    print(f"Metadata saved: {metadata_path}")
+    print(f"Package size: {os.path.getsize(package_path) / 1024 / 1024:.2f} MB")
+
+    return model_package
+
+
+def generate_visualization_report(models, results, X_test, y_test):
+    """Generate a visualization report for the models."""
+    from src.visualization.plots import create_visualization_report
+
+    print("Generating visualization report...")
+    try:
+        create_visualization_report(models, results, X_test, y_test)
+        print("Visualization report generated")
+    except Exception as e:
+        print(f"Warning: Visualization report generation failed: {e}")
+
+
 def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
-    """Entraîne et sauvegarde tous les modèles de scikit-survival"""
+    """Train and save all scikit-survival models"""
     models = {}
 
     # Cox Proportional Hazards
-    print("Entraînement du modèle Cox...")
+    print("Training Cox model...")
     cox = train_cox_model(X_train, y_train)
     cox_path = save_model(cox, "cox", COX_PARAMS)
     models["cox"] = {"model": cox, "path": cox_path, "params": COX_PARAMS}
 
     # Random Survival Forest
-    print("Entraînement du modèle Random Survival Forest...")
+    print("Training Random Survival Forest model...")
     rsf = train_rsf_model(X_train, y_train)
     rsf_path = save_model(rsf, "rsf", RSF_PARAMS)
     models["rsf"] = {"model": rsf, "path": rsf_path, "params": RSF_PARAMS}
 
     # Gradient Boosting Survival Analysis
-    print("Entraînement du modèle Gradient Boosting...")
+    print("Training Gradient Boosting model...")
     xgb = train_gradient_boosting_model(X_train, y_train)
     xgb_path = save_model(xgb, "gradient_boosting", GRADIENT_BOOSTING_PARAMS)
     models["gradient_boosting"] = {
@@ -292,7 +426,7 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
     }
 
     # CoxNet (Cox avec régularisation)
-    print("Entraînement du modèle CoxNet...")
+    print("Training CoxNet model...")
     try:
         coxnet = train_coxnet_model(X_train, y_train)
         coxnet_path = save_model(coxnet, "coxnet", COXNET_PARAMS)
@@ -302,10 +436,10 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": COXNET_PARAMS,
         }
     except Exception as e:
-        print(f"  Erreur CoxNet: {e}")
+        print(f"  Error CoxNet: {e}")
 
     # Extra Survival Trees
-    print("Entraînement du modèle Extra Survival Trees...")
+    print("Training Extra Survival Trees model...")
     try:
         extra_trees = train_extra_trees_model(X_train, y_train)
         extra_trees_path = save_model(extra_trees, "extra_trees", EXTRA_TREES_PARAMS)
@@ -315,10 +449,10 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": EXTRA_TREES_PARAMS,
         }
     except Exception as e:
-        print(f"   Erreur Extra Trees: {e}")
+        print(f"   Error Extra Trees: {e}")
 
     # Componentwise Gradient Boosting
-    print("Entraînement du modèle Componentwise Gradient Boosting...")
+    print("Training Componentwise Gradient Boosting model...")
     try:
         comp_gb = train_componentwise_gb_model(X_train, y_train)
         comp_gb_path = save_model(comp_gb, "componentwise_gb", COMPONENTWISE_GB_PARAMS)
@@ -328,11 +462,11 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
             "params": COMPONENTWISE_GB_PARAMS,
         }
     except Exception as e:
-        print(f"  Erreur Componentwise GB: {e}")
+        print(f"  Error Componentwise GB: {e}")
 
     # PyCox DeepSurv
     if PYCOX_AVAILABLE:
-        print("Entraînement du modèle PyCox DeepSurv...")
+        print("Training PyCox DeepSurv model...")
         try:
             pycox_deepsurv = train_pycox_deepsurv_model(X_train, y_train, X_val, y_val)
             pycox_path = save_model(
@@ -344,9 +478,9 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
                 "params": PYCOX_DEEPSURV_PARAMS,
             }
         except Exception as e:
-            print(f"   Erreur PyCox DeepSurv: {e}")
+            print(f"   Error PyCox DeepSurv: {e}")
     else:
-        print("   PyCox non disponible, DeepSurv ignore")
+        print("   PyCox not available, DeepSurv ignored")
 
     return models
 
