@@ -33,7 +33,6 @@ def perform_feature_engineering(clinical_data_path, molecular_data_path, output_
     clinical_features = ClinicalFeatureEngineering._create_center_one_hot_encoding(
         clinical_features
     )
-
     # Perform molecular feature extraction
     molecular_features = MolecularFeatureExtraction.extract_molecular_risk_features(
         molecular_df, molecular_df
@@ -49,7 +48,6 @@ def perform_feature_engineering(clinical_data_path, molecular_data_path, output_
         clinical_features, molecular_features, molecular_features, cytogenetic_features
     )
     final_features = final_features.fillna(0)
-    # Save the engineered features
     final_features.to_csv(output_path, index=False)
 
 

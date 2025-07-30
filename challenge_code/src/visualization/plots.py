@@ -35,7 +35,7 @@ def plot_correlation_matrix(df, figsize=(12, 8)):
     # Select only numeric columns
     numeric_df = df.select_dtypes(include=[np.number])
     corr_matrix = numeric_df.corr()
-
+    print(corr_matrix)
     plt.figure(figsize=figsize)
     sns.heatmap(
         corr_matrix,

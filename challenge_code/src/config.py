@@ -106,9 +106,7 @@ GENE_PATHWAYS = {
 TAU = 7  # For C-index calculation
 
 # Survival model parameters
-COX_PARAMS = {
-    "alpha": 1.0,
-}
+COX_PARAMS = {"alpha": 0.2, "n_iter": 10}
 
 """RSF_PARAMS = {
     "n_estimators": 200,  # Augmentation pour plus de stabilité
@@ -122,51 +120,50 @@ RSF_PARAMS = {
     "n_estimators": 600,
     "min_samples_split": 36,
     "min_samples_leaf": 8,
-    "max_depth": 11,
+    "max_depth": 20,
 }
 
-"""
 GRADIENT_BOOSTING_PARAMS = {
     "n_estimators": 1000,
     "learning_rate": 0.01323,
-    "max_depth": 6,
+    "max_depth": 30,
     "subsample": 0.4117,
     "min_samples_leaf": 37,
     "min_samples_split": 160,
 }
+
 """
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 60,
+    "n_estimators": ,
     "learning_rate": 0.1,
     "max_depth": 3,
     "subsample": 0.8,
     "min_samples_leaf": 15,
     "min_samples_split": 30,
-}
+}"""
 # 0,7545788740320561 best
 
 
 # Parameters for CoxNet (Cox with regularization)
 COXNET_PARAMS = {
-    "l1_ratio": 0.9,  # Balance between L1 and L2 (0.9 = mainly L1)
+    "l1_ratio": 0.5,  # Balance between L1 and L2 (0.9 = mainly L1)
     "alphas": None,  # Auto-determination
     "n_alphas": 100,
     "normalize": True,
-    "max_iter": 100000,
+    "max_iter": 10,
 }
 
 # Parameters for Extra Survival Trees
 EXTRA_TREES_PARAMS = {
-    "n_estimators": 10,
-    "min_samples_split": 6,
-    "min_samples_leaf": 3,
+    "n_estimators": 30,
+    "min_samples_split": 35,
+    "min_samples_leaf": 8,
     "max_depth": 10,
-    "max_features": "sqrt",
 }
 
 # Parameters for Componentwise Gradient Boosting
 COMPONENTWISE_GB_PARAMS = {
-    "n_estimators": 10,
+    "n_estimators": 5,
     "learning_rate": 0.05,
     "subsample": 1.0,
 }

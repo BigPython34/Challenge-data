@@ -19,7 +19,7 @@ def main():
 
     # 1. Load the prepared dataset
     print("\n1. Loading the prepared dataset...")
-    X_train_path = "datasets/final_training_dataset.csv"
+    X_train_path = "datasets/selected_features.csv"
     y_train_path = "datasets/cleaned_target.csv"
 
     try:
@@ -31,7 +31,7 @@ def main():
     # Split data into training and test sets
     print("\nSplitting data into training and test sets...")
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.005, random_state=42
     )
 
     # 2. Train models

@@ -8,3 +8,6 @@ os.system("python impute_data.py")
 
 # Execute feature_engineering script
 os.system("python feature_engineering.py")
+
+# Execute select_uncorrelated_features script
+os.system("python select_uncorrelated_features.py")
