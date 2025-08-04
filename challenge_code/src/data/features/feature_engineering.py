@@ -61,7 +61,7 @@ class ClinicalFeatureEngineering:
         for ratio_name, (numerator, denominator) in ratios.items():
             if numerator in df.columns and denominator in df.columns:
                 df[ratio_name] = df[numerator] / df[denominator]
-                df[ratio_name].replace([np.inf, -np.inf], np.nan, inplace=True)
+                df[ratio_name] = df[ratio_name].replace([np.inf, -np.inf], np.nan)
         return df
 
     @staticmethod
@@ -114,7 +114,7 @@ class ClinicalFeatureEngineering:
         log_columns = ["WBC", "PLT", "ANC", "MONOCYTES"]
         for col in log_columns:
             if col in df.columns:
-                df[f"log_{col}"] = np.log1p(df[col].fillna(0))
+                df[f"log_{col}"] = np.log1p(df[col])
         return df
 
     @staticmethod
@@ -153,12 +153,13 @@ class CytogeneticFeatureExtraction:
     @staticmethod
     def extract_cytogenetic_risk_features(df: pd.DataFrame) -> pd.DataFrame:
         if "CYTOGENETICS" not in df.columns:
-            return df
+            return pd.DataFrame(index=df.index)
 
         result_df = pd.DataFrame(index=df.index)
 
+        result_df["cyto_is_missing"] = df["CYTOGENETICS"].isnull().astype(int)
         # Clean and prepare cytogenetics data
-        cytogenetics_clean = df["CYTOGENETICS"].fillna("46,XX").str.strip()
+        cytogenetics_clean = df["CYTOGENETICS"].fillna("").str.strip()
 
         # === BASIC CHROMOSOME CHARACTERISTICS ===
         result_df = CytogeneticFeatureExtraction._extract_basic_chromosome_features(
@@ -184,6 +185,7 @@ class CytogeneticFeatureExtraction:
 
         # Drop the CYTOGENETICS column after extraction
         df = df.drop(columns=["CYTOGENETICS"], errors="ignore")
+        result_df.loc[result_df["cyto_is_missing"] == 1, result_df.columns] = np.nan
 
         return result_df
 
@@ -556,134 +558,50 @@ class MolecularFeatureExtraction:
 
 
 class IntegratedFeatureEngineering:
-    """
-    Handles integrated risk scores combining clinical, molecular, and cytogenetic data.
-    """
-
-    @staticmethod
-    def _create_integrated_risk_scores(final_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create comprehensive risk score.
-        """
-        risk_components = []
-        if "eln_integrated_risk" in final_df.columns:
-            risk_components.append(final_df["eln_integrated_risk"] * 0.4)
-        if "clinical_risk_score" in final_df.columns:
-            clinical_normalized = (
-                final_df["clinical_risk_score"] / final_df["clinical_risk_score"].max()
-            )
-            risk_components.append(clinical_normalized * 0.3)
-        if "mutation_burden_score" in final_df.columns:
-            risk_components.append(final_df["mutation_burden_score"] * 0.3)
-        if risk_components:
-            final_df["comprehensive_risk_score"] = sum(risk_components)
-        return final_df
-
     @staticmethod
     def combine_all_features(
         clinical_df: pd.DataFrame,
-        molecular_df: pd.DataFrame,
-        burden_df: pd.DataFrame,
-        cyto_df: pd.DataFrame,
+        molecular_df: Optional[pd.DataFrame] = None,
+        burden_df: Optional[pd.DataFrame] = None,
+        cyto_df: Optional[pd.DataFrame] = None,
     ) -> pd.DataFrame:
-        """
-        Combine all features and create integrated risk scores.
 
-        This function merges all feature categories and creates integrated scores
-        while preserving individual features to avoid information loss.
-
-        Parameters
-        ----------
-        clinical_df, molecular_df, burden_df, cyto_df : pd.DataFrame
-            Feature dataframes from different categories
-
-        Returns
-        -------
-        pd.DataFrame
-            Complete dataset with all features and integrated scores
-        """
-        # Start with clinical data as base
         final_df = clinical_df.copy()
         final_df["ID"] = final_df["ID"].astype(str)
 
-        # === MERGE ALL FEATURE CATEGORIES ===
-        final_df = IntegratedFeatureEngineering._merge_feature_dataframes(
-            final_df, molecular_df, burden_df, cyto_df
-        )
-
-        # === FILL MISSING VALUES STRATEGICALLY ===
-        final_df = IntegratedFeatureEngineering._fill_missing_values_strategically(
-            final_df
-        )
-
-        # === CREATE INTEGRATED SCORES ===
-        final_df = IntegratedFeatureEngineering._create_integrated_risk_scores(final_df)
-        final_df = final_df.drop(columns=["CYTOGENETICS"], errors="ignore")
-        return final_df
-
-    @staticmethod
-    def _merge_feature_dataframes(
-        final_df: pd.DataFrame,
-        molecular_df: pd.DataFrame,
-        burden_df: pd.DataFrame,
-        cyto_df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """Merge all feature dataframes with proper handling of missing data."""
-        # Merge molecular features
-        if not molecular_df.empty:
+        # Fusionner les dataframes
+        if molecular_df is not None and not molecular_df.empty:
             molecular_df["ID"] = molecular_df["ID"].astype(str)
             final_df = final_df.merge(molecular_df, on="ID", how="left")
 
-        # Merge mutation burden features
-        if not burden_df.empty:
+        if burden_df is not None and not burden_df.empty:
             burden_df["ID"] = burden_df["ID"].astype(str)
             final_df = final_df.merge(burden_df, on="ID", how="left")
 
-        # Merge cytogenetic features
-        if not cyto_df.empty:
-            cyto_df_reset = cyto_df.reset_index()
-            if "index" in cyto_df_reset.columns:
-                cyto_df_reset = cyto_df_reset.rename(columns={"index": "ID"})
-            cyto_df_reset["ID"] = cyto_df_reset["ID"].astype(str)
-            final_df = final_df.merge(cyto_df_reset, on="ID", how="left")
+        if cyto_df is not None and not cyto_df.empty:
+            # L'index de cyto_df est l'ID patient
+            cyto_df.index = cyto_df.index.astype(str)
+            final_df = final_df.merge(
+                cyto_df, left_on="ID", right_index=True, how="left"
+            )
 
-        return final_df
-
-    @staticmethod
-    def _fill_missing_values_strategically(final_df: pd.DataFrame) -> pd.DataFrame:
-        """Fill missing values based on clinical knowledge."""
-        # Missing mutations = no mutation detected
-        mutation_cols = [col for col in final_df.columns if col.startswith("mut_")]
-        for col in mutation_cols:
-            final_df[col] = final_df[col].fillna(0).astype(int)
-
-        # Missing mutation burden = no mutations
-        burden_cols = [
-            "total_mutations",
-            "high_vaf_mutations",
-            "vaf_mean",
-            "vaf_median",
-            "vaf_max",
-            "high_vaf_ratio",
-        ]
-        for col in burden_cols:
-            if col in final_df.columns:
-                final_df[col] = final_df[col].fillna(0)
-
-        # Missing cytogenetic abnormalities = normal/not detected
-        cyto_cols = [
+        mutation_cols = [
             col
             for col in final_df.columns
-            if any(
-                col.startswith(prefix)
-                for prefix in ["t_", "inv_", "del_", "complex_", "normal_", "any_"]
+            if col.startswith(
+                ("mut_", "vaf_", "CEBPA_", "TP53_", "pathway_", "eln_molecular_risk")
             )
         ]
-        for col in cyto_cols:
-            final_df[col] = final_df[col].fillna(0).astype(int)
+        final_df[mutation_cols] = final_df[mutation_cols].fillna(0)
 
-        # Missing cytogenetic risk = intermediate (conservative)
-        if "eln_cyto_risk" in final_df.columns:
-            final_df["eln_cyto_risk"] = final_df["eln_cyto_risk"].fillna(1)
+        # S'assurer que les colonnes de comptage sont des entiers
+        count_cols = [
+            col
+            for col in final_df.columns
+            if "_count" in col or "total_mutations" in col
+        ]
+        final_df[count_cols] = final_df[count_cols].fillna(0).astype(int)
+
+        final_df = final_df.drop(columns=["CYTOGENETICS", "CENTER"], errors="ignore")
 
         return final_df

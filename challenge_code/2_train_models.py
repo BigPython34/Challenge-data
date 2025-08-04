@@ -19,8 +19,8 @@ def main():
 
     # 1. Load the prepared dataset
     print("\n1. Loading the prepared dataset...")
-    X_train_path = "datasets/selected_features.csv"
-    y_train_path = "datasets/cleaned_target.csv"
+    X_train_path = "datasets_processed/X_train_processed.csv"
+    y_train_path = "datasets_processed/y_train_processed.csv"
 
     try:
         X, y = load_training_dataset_csv(X_train_path, y_train_path)

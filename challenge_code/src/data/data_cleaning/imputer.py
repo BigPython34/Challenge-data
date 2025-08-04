@@ -1,351 +1,114 @@
 """
-Advanced imputation strategies for AML clinical data.
+Advanced imputation module for post-feature-engineered AML data.
 
-This module provides medical domain-informed imputation methods
-that consider the biological relationships between clinical measurements.
-Refactored for modularity and maintainability.
+This module provides robust, scikit-learn compatible imputation strategies,
+designed to be used AFTER comprehensive feature engineering. It ensures no
+data leakage between training and testing sets by adhering to the fit/transform
+paradigm.
 """
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional
+from typing import List
 from sklearn.experimental import enable_iterative_imputer
-from enum import Enum
-from sklearn.impute import SimpleImputer, KNNImputer, IterativeImputer
-from sklearn.linear_model import LinearRegression, BayesianRidge
+from sklearn.impute import KNNImputer, IterativeImputer
+from sklearn.ensemble import (
+    RandomForestRegressor,
+)  # Un estimateur plus puissant pour l'imputation
 
 
-class ImputationStrategy(Enum):
-    """Available imputation strategies for different data types."""
+class AdvancedImputer:
+    """
+    A scikit-learn compatible imputer for post-feature-engineered data.
 
-    MEDIAN = "median"
-    MEAN = "mean"
-    KNN = "knn"
-    ITERATIVE = "iterative"
-    MEDICAL_INFORMED = "medical_informed"
-    REGRESSION = "regression"
+    This class wraps standard but powerful imputation strategies like KNN and
+    IterativeImputer, ensuring they are correctly fitted only on training
+    data and then applied to any new data.
 
+    Parameters
+    ----------
+    strategy : str, optional
+        The imputation strategy to use. Supported: 'knn', 'iterative'.
+        Defaults to 'iterative'.
+    n_neighbors : int, optional
+        Number of neighbors to use for 'knn' imputation. Defaults to 5.
+    """
 
-class ClinicalImputer:
-    """Handles intelligent clinical imputation."""
+    def __init__(self, strategy: str = "iterative", n_neighbors: int = 5):
+        if strategy not in ["knn", "iterative"]:
+            raise ValueError("Strategy must be either 'knn' or 'iterative'")
 
-    @staticmethod
-    def intelligent_clinical_imputation(
-        clinical_df: pd.DataFrame,
-        strategy: ImputationStrategy = ImputationStrategy.MEDICAL_INFORMED,
-    ) -> tuple[pd.DataFrame, Dict]:
+        self.strategy = strategy
+        self.n_neighbors = n_neighbors
+        self.imputer_ = None  # L'imputeur scikit-learn sera stocké ici
+        self.trained_columns_: List[str] = None  # Pour garder l'ordre des colonnes
+
+    def fit(self, X: pd.DataFrame, y=None):
         """
-        Perform intelligent imputation of clinical data using medical knowledge.
+        Fit the imputer on the training data.
+
+        Learns the parameters for imputation (e.g., neighbors for KNN, regression
+        models for IterativeImputer) from the training data.
 
         Parameters
         ----------
-        clinical_df : pd.DataFrame
-            Clinical data with missing values
-        strategy : ImputationStrategy
-            The imputation strategy to use
-
-        Returns
-        -------
-        tuple[pd.DataFrame, Dict]
-            Imputed dataframe and imputation metadata
+        X : pd.DataFrame
+            The training data with missing values.
         """
-        print("=== INTELLIGENT CLINICAL IMPUTATION ===")
+        print(f"Fitting AdvancedImputer with '{self.strategy}' strategy...")
+        self.trained_columns_ = X.columns.tolist()
 
-        df_imputed = clinical_df.copy()
-        imputation_metadata = {
-            "method": strategy.value,
-            "columns_imputed": [],
-            "strategy_details": {},
-        }
+        if self.strategy == "knn":
+            self.imputer_ = KNNImputer(n_neighbors=self.n_neighbors)
 
-        if strategy == ImputationStrategy.MEDICAL_INFORMED:
-            df_imputed, metadata = MedicalImputer.medical_informed_imputation(
-                df_imputed
+        elif self.strategy == "iterative":
+            # Utiliser un estimateur non-linéaire comme RandomForest peut capturer
+            # des relations plus complexes que la simple régression linéaire.
+            # C'est une version surpuissante de votre `_impute_cell_counts`.
+            estimator = RandomForestRegressor(
+                n_estimators=10, random_state=42, n_jobs=-1
             )
-            imputation_metadata.update(metadata)
-        else:
-            df_imputed, metadata = StandardImputer.standard_imputation(
-                df_imputed, strategy
+            self.imputer_ = IterativeImputer(
+                estimator=estimator,
+                max_iter=10,
+                random_state=42,
+                initial_strategy="median",
+                imputation_order="ascending",  # ordre d'imputation par nombre de NaN
             )
-            imputation_metadata.update(metadata)
 
-        # Final cleanup - ensure no NaN values remain
-        numeric_cols = df_imputed.select_dtypes(include=[np.number]).columns
-        remaining_nans = df_imputed[numeric_cols].isna().sum().sum()
+        self.imputer_.fit(X)
+        print("Imputer fitted successfully.")
+        return self
 
-        if remaining_nans > 0:
-            print(
-                f"   Final cleanup: {remaining_nans} remaining NaN values filled with 0"
-            )
-            df_imputed[numeric_cols] = df_imputed[numeric_cols].fillna(0)
-
-        print("Imputation completed")
-        print(f"   Columns imputed: {imputation_metadata['columns_imputed']}")
-        print(f"   Remaining missing values: {df_imputed.isna().sum().sum()}")
-
-        return df_imputed, imputation_metadata
-
-
-class MedicalImputer:
-    """Handles medical domain-informed imputation."""
-
-    @staticmethod
-    def medical_informed_imputation(df: pd.DataFrame) -> tuple[pd.DataFrame, Dict]:
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """
-        Apply medical domain-informed imputation strategies.
+        Impute missing values using the learned parameters.
 
         Parameters
         ----------
-        df : pd.DataFrame
-            Clinical data to impute
+        X : pd.DataFrame
+            The data to transform (can be train or test data).
 
         Returns
         -------
-        tuple[pd.DataFrame, Dict]
-            Imputed data and metadata
+        pd.DataFrame
+            The dataframe with missing values imputed.
         """
-        df_imputed = df.copy()
-        metadata = {
-            "method": "medical_informed",
-            "columns_imputed": [],
-            "strategy_details": {},
-        }
+        if self.imputer_ is None:
+            raise RuntimeError("You must fit the imputer before transforming data.")
 
-        # Create cytopenia context for informed imputation
-        cytopenia_context = MedicalImputer._create_cytopenia_context(df_imputed)
+        # S'assurer que les colonnes sont dans le même ordre que pendant le fit
+        X_reordered = X[self.trained_columns_]
 
-        # Medical imputation order based on clinical dependencies
-        imputation_order = ["WBC", "ANC", "MONOCYTES", "PLT", "HB", "BM_BLAST"]
+        print(f"Transforming data... ({X.isna().sum().sum()} missing values found)")
+        X_imputed_np = self.imputer_.transform(X_reordered)
 
-        for column in imputation_order:
-            if column in df_imputed.columns and df_imputed[column].isna().any():
-                df_imputed[column] = MedicalImputer.medical_imputation_strategy(
-                    df_imputed, column, cytopenia_context
-                )
-                metadata["columns_imputed"].append(column)
-                metadata["strategy_details"][column] = "medical_informed"
-
-        # Handle categorical variables
-        MedicalImputer._handle_categorical_variables(df_imputed, metadata)
-
-        return df_imputed, metadata
-
-    @staticmethod
-    def medical_imputation_strategy(
-        df: pd.DataFrame, column: str, patient_context: Optional[pd.DataFrame] = None
-    ) -> pd.Series:
-        """
-        Apply medical domain-informed imputation for a specific clinical measurement.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Clinical data
-        column : str
-            Column name to impute
-        patient_context : pd.DataFrame, optional
-            Additional patient context for informed imputation
-
-        Returns
-        -------
-        pd.Series
-            Imputed values for the column
-        """
-        values = df[column].copy()
-        missing_mask = values.isna()
-
-        if not missing_mask.any():
-            return values
+        # Reconstruire le DataFrame
+        X_imputed_df = pd.DataFrame(
+            X_imputed_np, columns=self.trained_columns_, index=X.index
+        )
 
         print(
-            f"   🏥 Medical imputation for {column} ({missing_mask.sum()} missing values)"
+            f"Transformation complete. Remaining missing values: {X_imputed_df.isna().sum().sum()}"
         )
-
-        if column == "BM_BLAST":
-            values = MedicalImputer._impute_bone_marrow_blasts(df, values, missing_mask)
-        elif column in ["WBC", "ANC", "MONOCYTES", "PLT"]:
-            values = MedicalImputer._impute_cell_counts(
-                df, column, values, missing_mask
-            )
-        elif column == "HB":
-            values = MedicalImputer._impute_hemoglobin(
-                df, values, missing_mask, patient_context
-            )
-        else:
-            values.fillna(values.median(), inplace=True)
-
-        print(f"      {missing_mask.sum()} values imputed")
-        return values
-
-    @staticmethod
-    def _handle_categorical_variables(df_imputed: pd.DataFrame, metadata: Dict):
-        """Handle categorical variables during medical imputation."""
-        if "CENTER" in df_imputed.columns:
-            df_imputed["CENTER"] = df_imputed["CENTER"].fillna("Unknown")
-            metadata["columns_imputed"].append("CENTER")
-
-        if "CYTOGENETICS" in df_imputed.columns:
-            df_imputed["CYTOGENETICS"] = df_imputed["CYTOGENETICS"].fillna("46,XX")
-            metadata["columns_imputed"].append("CYTOGENETICS")
-
-    @staticmethod
-    def _create_cytopenia_context(df: pd.DataFrame) -> pd.DataFrame:
-        """Create cytopenia context for informed imputation."""
-        context = pd.DataFrame(index=df.index)
-        context["cytopenia_context"] = ((df["PLT"] < 100) | (df["ANC"] < 1.5)).fillna(
-            False
-        )
-        return context
-
-    @staticmethod
-    def _impute_bone_marrow_blasts(
-        df: pd.DataFrame, values: pd.Series, missing_mask: pd.Series
-    ) -> pd.Series:
-        """Impute bone marrow blast percentage using medical knowledge."""
-        if "WBC" in df.columns:
-            high_wbc_mask = (df["WBC"] > 25) & missing_mask
-            normal_wbc_mask = (df["WBC"] <= 25) & missing_mask
-
-            median_val = values.median()
-            high_wbc_median = (
-                values[df["WBC"] > 25].median()
-                if (df["WBC"] > 25).any()
-                else median_val
-            )
-
-            values.loc[high_wbc_mask] = high_wbc_median
-            values.loc[normal_wbc_mask] = median_val
-        else:
-            values.fillna(values.median(), inplace=True)
-
-        return values
-
-    @staticmethod
-    def _impute_cell_counts(
-        df: pd.DataFrame, column: str, values: pd.Series, missing_mask: pd.Series
-    ) -> pd.Series:
-        """Impute cell counts using regression if other counts are available."""
-        other_counts = ["WBC", "ANC", "MONOCYTES", "PLT"]
-        other_counts = [c for c in other_counts if c in df.columns and c != column]
-
-        if len(other_counts) >= 2:
-            X = df[other_counts].fillna(df[other_counts].median())
-            y = values.dropna()
-
-            if len(y) > 10:
-                try:
-                    reg = LinearRegression()
-                    X_train = X.loc[y.index]
-                    reg.fit(X_train, y)
-
-                    X_missing = X.loc[missing_mask]
-                    predictions = reg.predict(X_missing)
-
-                    predictions = np.maximum(predictions, 0.1)
-                    values.loc[missing_mask] = predictions
-
-                except ValueError as e:
-                    print(f"      Regression failed for {column}, using median: {e}")
-                    values.fillna(values.median(), inplace=True)
-            else:
-                values.fillna(values.median(), inplace=True)
-        else:
-            values.fillna(values.median(), inplace=True)
-
-        return values
-
-    @staticmethod
-    def _impute_hemoglobin(
-        df: pd.DataFrame,
-        values: pd.Series,
-        missing_mask: pd.Series,
-        patient_context: Optional[pd.DataFrame] = None,
-    ) -> pd.Series:
-        """Impute hemoglobin considering anemia context."""
-        median_val = values.median()
-
-        if (
-            patient_context is not None
-            and "cytopenia_context" in patient_context.columns
-        ):
-            cytopenia_mask = patient_context["cytopenia_context"] & missing_mask
-            normal_mask = ~patient_context["cytopenia_context"] & missing_mask
-
-            anemic_median = values[
-                patient_context["cytopenia_context"].fillna(False)
-            ].median()
-            normal_median = values[
-                ~patient_context["cytopenia_context"].fillna(False)
-            ].median()
-
-            if not np.isnan(anemic_median):
-                values.loc[cytopenia_mask] = anemic_median
-            if not np.isnan(normal_median):
-                values.loc[normal_mask] = normal_median
-        else:
-            values.fillna(median_val, inplace=True)
-
-        return values
-
-
-class StandardImputer:
-    """Handles standard statistical imputation methods."""
-
-    @staticmethod
-    def standard_imputation(
-        df: pd.DataFrame, strategy: ImputationStrategy
-    ) -> tuple[pd.DataFrame, Dict]:
-        """
-        Apply standard statistical imputation methods.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Data to impute
-        strategy : ImputationStrategy
-            Imputation method to use
-
-        Returns
-        -------
-        tuple[pd.DataFrame, Dict]
-            Imputed data and metadata
-        """
-        df_imputed = df.copy()
-        metadata = {
-            "method": strategy.value,
-            "columns_imputed": [],
-            "strategy_details": {},
-        }
-
-        numeric_cols = df_imputed.select_dtypes(include=[np.number]).columns
-        categorical_cols = df_imputed.select_dtypes(
-            include=["object", "category"]
-        ).columns
-
-        if len(numeric_cols) > 0:
-            imputer = StandardImputer._get_numeric_imputer(strategy)
-            df_imputed[numeric_cols] = imputer.fit_transform(df_imputed[numeric_cols])
-            metadata["columns_imputed"].extend(numeric_cols.tolist())
-
-        for col in categorical_cols:
-            if df_imputed[col].isna().any():
-                df_imputed[col] = df_imputed[col].fillna("Unknown")
-                metadata["columns_imputed"].append(col)
-
-        return df_imputed, metadata
-
-    @staticmethod
-    def _get_numeric_imputer(strategy: ImputationStrategy):
-        """Get the appropriate numeric imputer based on strategy."""
-        if strategy == ImputationStrategy.MEDIAN:
-            return SimpleImputer(strategy="median")
-        elif strategy == ImputationStrategy.MEAN:
-            return SimpleImputer(strategy="mean")
-        elif strategy == ImputationStrategy.KNN:
-            return KNNImputer(n_neighbors=5)
-        elif strategy == ImputationStrategy.ITERATIVE:
-            return IterativeImputer(
-                estimator=BayesianRidge(), random_state=42, max_iter=10
-            )
-        else:
-            return SimpleImputer(strategy="median")
+        return X_imputed_df

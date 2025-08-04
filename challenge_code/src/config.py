@@ -108,28 +108,23 @@ TAU = 7  # For C-index calculation
 # Survival model parameters
 COX_PARAMS = {"alpha": 0.2, "n_iter": 10}
 
-"""RSF_PARAMS = {
-    "n_estimators": 200,  # Augmentation pour plus de stabilité
-    "min_samples_split": 20,  # Augmentation pour plus de régularisation
-    "min_samples_leaf": 10,  # Augmentation pour plus de régularisation
-    "max_depth": 10,  # Légère augmentation mais toujours contrôlé
-}
-"""
 
 RSF_PARAMS = {
-    "n_estimators": 600,
-    "min_samples_split": 36,
-    "min_samples_leaf": 8,
-    "max_depth": 20,
+    "n_estimators": 300,
+    "min_samples_split": 15,
+    "min_samples_leaf": 15,
+    "max_depth": None,
+    "max_features": 0.2,
 }
 
+
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 1000,
-    "learning_rate": 0.01323,
-    "max_depth": 30,
-    "subsample": 0.4117,
-    "min_samples_leaf": 37,
-    "min_samples_split": 160,
+    "n_estimators": 800,
+    "learning_rate": 0.02,
+    "max_depth": 3,
+    "subsample": 0.7,
+    "min_samples_leaf": 30,
+    "min_samples_split": 40,
 }
 
 """

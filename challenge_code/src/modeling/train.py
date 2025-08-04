@@ -68,6 +68,126 @@ class PyCoxWrapper:
         return self.model.predict_surv_df(X_scaled)
 
 
+def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **params):
+    """Train a PyCox DeepSurv model (simplified version)"""
+
+    if not PYCOX_AVAILABLE:
+        raise ImportError(
+            "PyCox not available. Install with: pip install pycox torchtuples"
+        )
+
+    # Config
+    config = PYCOX_DEEPSURV_PARAMS.copy()
+    config.update(params)
+
+    hidden_layers = config["hidden_layers"]
+    dropout = config["dropout"]
+    batch_norm = config["batch_norm"]
+    learning_rate = config["learning_rate"]
+    batch_size = config["batch_size"]
+    epochs = config["epochs"]
+    patience = config["patience"]
+    weight_decay = config["weight_decay"]
+    lr_scheduler = config.get("lr_scheduler", False)
+    lr_factor = config.get("lr_factor", 0.5)
+    lr_patience = config.get("lr_patience", 25)
+
+    # Preprocessing
+    durations = np.array([y[1] for y in y_train], dtype=np.float32)
+    events = np.array([y[0] for y in y_train], dtype=np.float32)
+
+    scaler = StandardScaler()
+    X_train_np = X_train.values if hasattr(X_train, "values") else X_train
+    X_train_scaled = scaler.fit_transform(X_train_np).astype(np.float32)
+
+    if X_val is None or y_val is None:
+        split = int(0.8 * len(X_train_scaled))
+        X_val_scaled = X_train_scaled[split:]
+        val_durations = durations[split:]
+        val_events = events[split:]
+        X_train_scaled = X_train_scaled[:split]
+        durations = durations[:split]
+        events = events[:split]
+    else:
+        X_val_np = X_val.values if hasattr(X_val, "values") else X_val
+        X_val_scaled = scaler.transform(X_val_np).astype(np.float32)
+        val_durations = np.array([y[1] for y in y_val], dtype=np.float32)
+        val_events = np.array([y[0] for y in y_val], dtype=np.float32)
+
+    # Label transformation
+    labtrans = LabTransCoxTime()
+    y_train_proc = labtrans.fit_transform(durations, events)
+    y_val_proc = labtrans.transform(val_durations, val_events)
+
+    # Network
+    net = tt.practical.MLPVanilla(
+        in_features=X_train_scaled.shape[1],
+        num_nodes=hidden_layers,
+        out_features=1,
+        batch_norm=batch_norm,
+        dropout=dropout,
+    )
+
+    model = PyCoxCoxPH(net, torch.optim.Adam)
+    model.labtrans = labtrans
+    model.optimizer.set_lr(learning_rate)
+    model.optimizer.param_groups[0]["weight_decay"] = weight_decay
+
+    if lr_scheduler:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            model.optimizer.optimizer,
+            mode="max",
+            factor=lr_factor,
+            patience=lr_patience,
+            min_lr=learning_rate * 0.01,
+        )
+    else:
+        scheduler = None
+
+    # Training loop (simplified)
+    best_val = 0.0
+    patience_counter = 0
+
+    for epoch in range(epochs):
+        model.fit(
+            X_train_scaled,
+            y_train_proc,
+            batch_size,
+            1,
+            val_data=(X_val_scaled, y_val_proc),
+            verbose=False,
+        )
+
+        train_pred = model.predict(X_train_scaled).flatten()
+        val_pred = model.predict(X_val_scaled).flatten()
+
+        try:
+            cindex_train = concordance_index_ipcw(y_train, y_train, train_pred)[0]
+            cindex_val = concordance_index_ipcw(y_train, y_val, val_pred)[0]
+        except:
+            cindex_train = np.nan
+            cindex_val = np.nan
+
+        if scheduler and not np.isnan(cindex_val):
+            scheduler.step(cindex_val)
+
+        if not np.isnan(cindex_val) and cindex_val > best_val:
+            best_val = cindex_val
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
+        print(
+            f"Epoch {epoch+1}/{epochs} | C-Index Train: {cindex_train:.4f} | Val: {cindex_val:.4f}"
+        )
+
+        if patience_counter >= patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
+
+    return PyCoxWrapper(model, scaler, labtrans)
+
+
 def train_cox_model(X_train, y_train, alpha=None):
     """Train a Cox Proportional Hazards model with config parameters"""
     if alpha is None:
@@ -483,123 +603,3 @@ def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
         print("   PyCox not available, DeepSurv ignored")
 
     return models
-
-
-def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **params):
-    """Train a PyCox DeepSurv model (simplified version)"""
-
-    if not PYCOX_AVAILABLE:
-        raise ImportError(
-            "PyCox not available. Install with: pip install pycox torchtuples"
-        )
-
-    # Config
-    config = PYCOX_DEEPSURV_PARAMS.copy()
-    config.update(params)
-
-    hidden_layers = config["hidden_layers"]
-    dropout = config["dropout"]
-    batch_norm = config["batch_norm"]
-    learning_rate = config["learning_rate"]
-    batch_size = config["batch_size"]
-    epochs = config["epochs"]
-    patience = config["patience"]
-    weight_decay = config["weight_decay"]
-    lr_scheduler = config.get("lr_scheduler", False)
-    lr_factor = config.get("lr_factor", 0.5)
-    lr_patience = config.get("lr_patience", 25)
-
-    # Preprocessing
-    durations = np.array([y[1] for y in y_train], dtype=np.float32)
-    events = np.array([y[0] for y in y_train], dtype=np.float32)
-
-    scaler = StandardScaler()
-    X_train_np = X_train.values if hasattr(X_train, "values") else X_train
-    X_train_scaled = scaler.fit_transform(X_train_np).astype(np.float32)
-
-    if X_val is None or y_val is None:
-        split = int(0.8 * len(X_train_scaled))
-        X_val_scaled = X_train_scaled[split:]
-        val_durations = durations[split:]
-        val_events = events[split:]
-        X_train_scaled = X_train_scaled[:split]
-        durations = durations[:split]
-        events = events[:split]
-    else:
-        X_val_np = X_val.values if hasattr(X_val, "values") else X_val
-        X_val_scaled = scaler.transform(X_val_np).astype(np.float32)
-        val_durations = np.array([y[1] for y in y_val], dtype=np.float32)
-        val_events = np.array([y[0] for y in y_val], dtype=np.float32)
-
-    # Label transformation
-    labtrans = LabTransCoxTime()
-    y_train_proc = labtrans.fit_transform(durations, events)
-    y_val_proc = labtrans.transform(val_durations, val_events)
-
-    # Network
-    net = tt.practical.MLPVanilla(
-        in_features=X_train_scaled.shape[1],
-        num_nodes=hidden_layers,
-        out_features=1,
-        batch_norm=batch_norm,
-        dropout=dropout,
-    )
-
-    model = PyCoxCoxPH(net, torch.optim.Adam)
-    model.labtrans = labtrans
-    model.optimizer.set_lr(learning_rate)
-    model.optimizer.param_groups[0]["weight_decay"] = weight_decay
-
-    if lr_scheduler:
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            model.optimizer.optimizer,
-            mode="max",
-            factor=lr_factor,
-            patience=lr_patience,
-            min_lr=learning_rate * 0.01,
-        )
-    else:
-        scheduler = None
-
-    # Training loop (simplified)
-    best_val = 0.0
-    patience_counter = 0
-
-    for epoch in range(epochs):
-        model.fit(
-            X_train_scaled,
-            y_train_proc,
-            batch_size,
-            1,
-            val_data=(X_val_scaled, y_val_proc),
-            verbose=False,
-        )
-
-        train_pred = model.predict(X_train_scaled).flatten()
-        val_pred = model.predict(X_val_scaled).flatten()
-
-        try:
-            cindex_train = concordance_index_ipcw(y_train, y_train, train_pred)[0]
-            cindex_val = concordance_index_ipcw(y_train, y_val, val_pred)[0]
-        except:
-            cindex_train = np.nan
-            cindex_val = np.nan
-
-        if scheduler and not np.isnan(cindex_val):
-            scheduler.step(cindex_val)
-
-        if not np.isnan(cindex_val) and cindex_val > best_val:
-            best_val = cindex_val
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        print(
-            f"Epoch {epoch+1}/{epochs} | C-Index Train: {cindex_train:.4f} | Val: {cindex_val:.4f}"
-        )
-
-        if patience_counter >= patience:
-            print(f"Early stopping at epoch {epoch+1}")
-            break
-
-    return PyCoxWrapper(model, scaler, labtrans)
