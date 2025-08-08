@@ -10,6 +10,7 @@ Key Features:
 - Integrated risk scores combining clinical, molecular, and cytogenetic data.
 """
 
+import re
 import pandas as pd
 import numpy as np
 from typing import List, Optional
@@ -32,6 +33,10 @@ class ClinicalFeatureEngineering:
         clinical_df = ClinicalFeatureEngineering._ensure_numeric_columns(
             clinical_df, numeric_columns
         )
+        # Add explicit missingness indicators (useful for imputation and survival bias)
+        for col in numeric_columns:
+            if col in clinical_df.columns:
+                clinical_df[f"{col}_missing"] = clinical_df[col].isna().astype(int)
         clinical_df = ClinicalFeatureEngineering._create_clinical_ratios(clinical_df)
         clinical_df = ClinicalFeatureEngineering._create_clinical_thresholds(
             clinical_df
@@ -152,8 +157,10 @@ class CytogeneticFeatureExtraction:
 
     @staticmethod
     def extract_cytogenetic_risk_features(df: pd.DataFrame) -> pd.DataFrame:
-        if "CYTOGENETICS" not in df.columns:
-            return pd.DataFrame(index=df.index)
+        if "CYTOGENETICS" not in df.columns or "ID" not in df.columns:
+            return pd.DataFrame(
+                columns=["ID"]
+            )  # Retourne un DataFrame vide avec ID si pas de colonne
 
         result_df = pd.DataFrame(index=df.index)
 
@@ -183,9 +190,17 @@ class CytogeneticFeatureExtraction:
             result_df
         )
 
-        # Drop the CYTOGENETICS column after extraction
-        df = df.drop(columns=["CYTOGENETICS"], errors="ignore")
-        result_df.loc[result_df["cyto_is_missing"] == 1, result_df.columns] = np.nan
+        # Drop the CYTOGENETICS column after extraction and set NaN for derived features when missing,
+        # but keep the cyto_is_missing indicator intact.
+        cols_to_nan = [c for c in result_df.columns if c != "cyto_is_missing"]
+        result_df.loc[result_df["cyto_is_missing"] == 1, cols_to_nan] = np.nan
+
+        # Ajout sécurisé de la colonne ID
+        result_df["ID"] = df["ID"].values
+
+        # Réorganiser pour mettre ID en premier (optionnel)
+        cols = ["ID"] + [c for c in result_df.columns if c != "ID"]
+        result_df = result_df[cols]
 
         return result_df
 
@@ -264,14 +279,32 @@ class CytogeneticFeatureExtraction:
         result_df: pd.DataFrame, cytogenetics: pd.Series
     ) -> pd.DataFrame:
         """Extract cytogenetic complexity metrics."""
-        # Count total abnormalities
-        result_df["num_cyto_abnormalities"] = (
-            cytogenetics.str.count(",").fillna(0).astype(int)
-        )
 
-        # Complex karyotype: ≥3 unrelated chromosome abnormalities
+        # Count total abnormalities
+        def count_abnormalities(cyto_string):
+            if not isinstance(cyto_string, str) or cyto_string == "":
+                return 0
+            # Ignorer le comptage de base comme 46,xy
+            # Ne garder que ce qui suit le premier ou deuxième comma
+            parts = cyto_string.split(",")
+            if len(parts) <= 2:
+                return 0
+            abnormalities_str = ",".join(parts[2:])
+            # Compter les anomalies structurales (t, del, inv, add, der) et numériques (+, -)
+            # C'est une heuristique plus avancée
+            count = len(re.findall(r"[t,del,inv,add,der,ins,\+,-]", abnormalities_str))
+            return count
+
+        # Appliquer cette fonction à la colonne
+        result_df["num_cyto_abnormalities"] = cytogenetics.apply(count_abnormalities)
         result_df["complex_karyotype"] = (
             result_df["num_cyto_abnormalities"] >= 3
+        ).astype(int)
+        result_df["has_derivative_chromosome"] = cytogenetics.str.contains(
+            "der", na=False
+        ).astype(int)
+        result_df["has_marker_chromosome"] = cytogenetics.str.contains(
+            r"\+mar", na=False
         ).astype(int)
 
         return result_df
@@ -287,8 +320,11 @@ class CytogeneticFeatureExtraction:
         result_df.loc[favorable_mask, "eln_cyto_risk"] = 0
 
         # Adverse risk (2)
-        adverse_mask = (result_df["any_adverse_cyto"] == 1) | (
-            result_df["complex_karyotype"] == 1
+        adverse_mask = (
+            (result_df["any_adverse_cyto"] == 1)
+            | (result_df["complex_karyotype"] == 1)
+            | (result_df["has_derivative_chromosome"] == 1)
+            | (result_df["has_marker_chromosome"] == 1)
         )
         result_df.loc[adverse_mask, "eln_cyto_risk"] = 2
 
@@ -343,13 +379,14 @@ class MolecularFeatureExtraction:
         return molecular_df.reset_index().rename(columns={"index": "ID"})
 
     @staticmethod
-    def _extract_binary_mutations(
-        molecular_df: pd.DataFrame, maf_df: pd.DataFrame, important_genes: List[str]
-    ) -> pd.DataFrame:
-        """Extract binary mutation status for all important genes."""
+    # Version corrigée et plus robuste
+
+    def _extract_binary_mutations(molecular_df, maf_df, important_genes):
+        present_genes = set(maf_df["GENE"].unique())
+
         for gene in important_genes:
             column_name = f"mut_{gene}"
-            if gene in maf_df["GENE"].values:
+            if gene in present_genes:
                 mutated_patients = maf_df[maf_df["GENE"] == gene]["ID"].unique()
                 molecular_df[column_name] = molecular_df.index.isin(
                     mutated_patients
@@ -555,6 +592,57 @@ class MolecularFeatureExtraction:
             if adverse_conditions
             else None
         )
+
+    # Ajoutez cette méthode DANS la classe MolecularFeatureExtraction
+
+    @staticmethod
+    def create_all_molecular_features(
+        base_df: pd.DataFrame, maf_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Orchestrateur pour créer ET COMBINER toutes les features moléculaires (risque et charge).
+        Ceci permet de ne faire qu'une seule fusion dans le script principal.
+
+        Parameters
+        ----------
+        base_df : pd.DataFrame
+            DataFrame de base contenant la colonne 'ID' des patients.
+        maf_df : pd.DataFrame
+            DataFrame brut des mutations.
+
+        Returns
+        -------
+        pd.DataFrame
+            Un unique DataFrame contenant toutes les features moléculaires, avec une colonne 'ID'.
+        """
+        print("    -> Extraction des features de risque (mutations, VAF, pathways)...")
+        risk_features = MolecularFeatureExtraction.extract_molecular_risk_features(
+            base_df, maf_df.copy()
+        )
+
+        print(
+            "    -> Extraction des features de charge (nombre de mutations, stats VAF)..."
+        )
+        burden_features = MolecularFeatureExtraction.create_molecular_burden_features(
+            maf_df.copy()
+        )
+
+        # Fusionner les deux types de features moléculaires en un seul DataFrame
+        if not risk_features.empty and not burden_features.empty:
+            # La fusion 'outer' garantit qu'on ne perd aucun patient si jamais
+            # il apparaissait dans un set de features et pas l'autre (peu probable mais sûr).
+            all_molecular_df = pd.merge(
+                risk_features, burden_features, on="ID", how="outer"
+            )
+        elif not risk_features.empty:
+            all_molecular_df = risk_features
+        elif not burden_features.empty:
+            all_molecular_df = burden_features
+        else:
+            # Si aucune feature n'a pu être créée, on retourne un df vide avec juste l'ID
+            return pd.DataFrame(columns=["ID"])
+
+        return all_molecular_df
 
 
 class IntegratedFeatureEngineering:

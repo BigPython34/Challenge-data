@@ -95,7 +95,7 @@ def create_and_evaluate_ensemble(rsf_preds_path, xgb_preds_path, target_path=Non
 if __name__ == "__main__":
     # Configurez ici les chemins vers vos fichiers de prédictions
     xgb_submission_file = "submissions/submission_gradient_boosting_n_estimators800_learning_rate0.0...ples_leaf30_min_samples_split40_20250804_232557_20250804_233402.csv"  # <-- METTRE LE VRAI NOM DE VOTRE FICHIER RSF
-    rsf_submission_file = "submissions/submission_rsf_20250804_233113.csv"  # <-- METTRE LE VRAI NOM DE VOTRE FICHIER XGB
+    rsf_submission_file = "submissions/submission_rsf_20250804_233113.csv"  
 
     # Si vous évaluez sur votre jeu de validation, fournissez le fichier cible
     # Laissez à None si vous générez pour le test final du challenge

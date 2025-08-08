@@ -43,7 +43,7 @@ class AdvancedImputer:
         self.imputer_ = None  # L'imputeur scikit-learn sera stocké ici
         self.trained_columns_: List[str] = None  # Pour garder l'ordre des colonnes
 
-    def fit(self, X: pd.DataFrame, y=None):
+    def fit(self, X, y=None):
         """
         Fit the imputer on the training data.
 
@@ -52,19 +52,19 @@ class AdvancedImputer:
 
         Parameters
         ----------
-        X : pd.DataFrame
+        X : pd.DataFrame or np.ndarray
             The training data with missing values.
         """
         print(f"Fitting AdvancedImputer with '{self.strategy}' strategy...")
-        self.trained_columns_ = X.columns.tolist()
+        if hasattr(X, "columns"):
+            self.trained_columns_ = X.columns.tolist()
+        else:
+            self.trained_columns_ = [f"col_{i}" for i in range(X.shape[1])]
 
         if self.strategy == "knn":
             self.imputer_ = KNNImputer(n_neighbors=self.n_neighbors)
 
         elif self.strategy == "iterative":
-            # Utiliser un estimateur non-linéaire comme RandomForest peut capturer
-            # des relations plus complexes que la simple régression linéaire.
-            # C'est une version surpuissante de votre `_impute_cell_counts`.
             estimator = RandomForestRegressor(
                 n_estimators=10, random_state=42, n_jobs=-1
             )
@@ -80,13 +80,13 @@ class AdvancedImputer:
         print("Imputer fitted successfully.")
         return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+    def transform(self, X) -> pd.DataFrame:
         """
         Impute missing values using the learned parameters.
 
         Parameters
         ----------
-        X : pd.DataFrame
+        X : pd.DataFrame or np.ndarray
             The data to transform (can be train or test data).
 
         Returns
@@ -98,16 +98,19 @@ class AdvancedImputer:
             raise RuntimeError("You must fit the imputer before transforming data.")
 
         # S'assurer que les colonnes sont dans le même ordre que pendant le fit
-        X_reordered = X[self.trained_columns_]
-
-        print(f"Transforming data... ({X.isna().sum().sum()} missing values found)")
-        X_imputed_np = self.imputer_.transform(X_reordered)
-
-        # Reconstruire le DataFrame
-        X_imputed_df = pd.DataFrame(
-            X_imputed_np, columns=self.trained_columns_, index=X.index
-        )
-
+        if hasattr(X, "columns"):
+            X_reordered = X[self.trained_columns_]
+            print(f"Transforming data... ({X.isna().sum().sum()} missing values found)")
+            X_imputed_np = self.imputer_.transform(X_reordered)
+            # Reconstruire le DataFrame
+            X_imputed_df = pd.DataFrame(
+                X_imputed_np, columns=self.trained_columns_, index=X.index
+            )
+        else:
+            # X is ndarray, assume columns already match order
+            print(f"Transforming ndarray data... (cannot count missing values)")
+            X_imputed_np = self.imputer_.transform(X)
+            X_imputed_df = pd.DataFrame(X_imputed_np, columns=self.trained_columns_)
         print(
             f"Transformation complete. Remaining missing values: {X_imputed_df.isna().sum().sum()}"
         )

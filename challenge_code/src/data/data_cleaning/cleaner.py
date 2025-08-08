@@ -5,9 +5,10 @@ This module handles the initial cleaning and validation of clinical,
 molecular, and survival data for AML patients.
 """
 
+from typing import Tuple
 import pandas as pd
 import numpy as np
-from typing import Tuple
+from ...config import CLINICAL_RANGES
 
 
 def clean_and_validate_data(
@@ -118,9 +119,8 @@ def _clean_clinical_data(
 
     for col in numeric_cols:
         if col in clinical_clean.columns:
-            # Convert to numeric
+            # Convert to numeric and coerce errors to NaN
             clinical_clean[col] = pd.to_numeric(clinical_clean[col], errors="coerce")
-
             # Apply biologically plausible ranges
             clinical_clean = _apply_clinical_ranges(clinical_clean, col)
 
@@ -177,48 +177,19 @@ def _clean_molecular_data(
 
 
 def _apply_clinical_ranges(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """
-    Apply biologically plausible ranges to clinical measurements.
+    """Applique des plages biologiquement plausibles aux mesures cliniques."""
+    if column not in CLINICAL_RANGES:
+        return df
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Clinical data
-    column : str
-        Column name to validate
-
-    Returns
-    -------
-    pd.DataFrame
-        Data with out-of-range values set to NaN
-    """
     original_count = df[column].notna().sum()
+    min_val, max_val = CLINICAL_RANGES[column]
 
-    if column == "BM_BLAST":
-        # Bone marrow blasts cannot exceed 100%
-        df.loc[df[column] > 100, column] = np.nan
-
-    elif column in ["WBC", "ANC", "MONOCYTES", "PLT"]:
-        # Cell counts cannot be negative
-        df.loc[df[column] < 0, column] = np.nan
-
-        # Extremely high values are likely errors (> 99.9th percentile of medical literature)
-        if column == "WBC":
-            df.loc[df[column] > 500, column] = np.nan  # 500k/µL is extremely high
-        elif column in ["ANC", "MONOCYTES"]:
-            df.loc[df[column] > 100, column] = np.nan  # 100k/µL is extremely high
-        elif column == "PLT":
-            df.loc[df[column] > 2000, column] = (
-                np.nan
-            )  # 2M platelets/µL is extremely high
-
-    elif column == "HB":
-        # Hemoglobin must be in reasonable range
-        df.loc[(df[column] < 2) | (df[column] > 25), column] = np.nan
+    # Appliquer les bornes
+    df.loc[(df[column] < min_val) | (df[column] > max_val), column] = np.nan
 
     invalid_count = original_count - df[column].notna().sum()
     if invalid_count > 0:
-        print(f"   {column}: {invalid_count} out-of-range values set to NaN")
+        print(f"   -> {invalid_count} valeurs invalides mises à NaN dans '{column}'")
 
     return df
 

@@ -17,7 +17,7 @@ from sksurv.metrics import concordance_index_ipcw
 from sksurv.util import Surv
 import warnings
 import pickle
-from src.modeling.evaluate import compare_models
+
 
 # PyCox imports
 try:
@@ -439,167 +439,24 @@ def load_training_dataset_csv(X_train_path, y_train_path):
     return X_train, y_train
 
 
-def evaluate_and_save_best_model(models, X_train, y_train, X_test, y_test, features):
-    """Evaluate models, select the best one, and save all relevant data."""
-
-    print("Evaluating models...")
-    results, best_model_name = compare_models(models, X_train, y_train, X_test, y_test)
-
-    print("Evaluation completed")
-    print(f"Best model: {best_model_name}")
-
-    # Display model performances
-    print("Model performances:")
-    for model_name, metrics in results.items():
-        if "test_accuracy" in metrics:
-            print(f"  • {model_name}: {metrics['test_accuracy']:.3f}")
-
-    # Save complete model package
-    print("Saving model package...")
-    os.makedirs("models", exist_ok=True)
-
-    model_package = {
-        "best_model": models[best_model_name],
-        "best_model_name": best_model_name,
-        "all_models": models,
-        "evaluation_results": results,
-        "features": features,
-        "imputer": None,  # Placeholder for imputer if available
-        "training_metadata": {
-            "training_date": pd.Timestamp.now().isoformat(),
-            "n_training_samples": len(X_train),
-            "n_features": len(features),
-            "best_model_accuracy": results[best_model_name].get("test_accuracy", "N/A"),
-            "feature_names": features,
-        },
+def get_survival_models():
+    """
+    Retourne un dictionnaire de modèles de survie non-entraînés
+    avec leurs paramètres par défaut.
+    """
+    models = {
+        "Cox": CoxPHSurvivalAnalysis(**COX_PARAMS),
+        "RSF": RandomSurvivalForest(**RSF_PARAMS, random_state=SEED),
+        "GradientBoosting": GradientBoostingSurvivalAnalysis(
+            **GRADIENT_BOOSTING_PARAMS, random_state=SEED
+        ),
+        "CoxNet": CoxnetSurvivalAnalysis(**COXNET_PARAMS),
+        "ExtraTrees": ExtraSurvivalTrees(**EXTRA_TREES_PARAMS, random_state=SEED),
+        "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis(
+            **COMPONENTWISE_GB_PARAMS, random_state=SEED
+        ),
     }
 
-    package_path = "models/model_package.pkl"
-    with open(package_path, "wb") as f:
-        pickle.dump(model_package, f)
-
-    print(f"Model package saved: {package_path}")
-
-    # Save the best model alone
-    best_model_path = "models/best_model.joblib"
-    joblib.dump(models[best_model_name], best_model_path)
-    print(f"Best model saved: {best_model_path}")
-
-    # Save readable metadata
-    metadata_path = "models/model_info.txt"
-    with open(metadata_path, "w") as f:
-        f.write("=== TRAINED MODEL INFORMATION ===\n")
-        f.write(
-            f"Training date: {model_package['training_metadata']['training_date']}\n"
-        )
-        f.write(f"Best model: {best_model_name}\n")
-        f.write(f"Accuracy: {results[best_model_name].get('test_accuracy', 'N/A')}\n")
-        f.write(f"Training samples: {len(X_train)}\n")
-        f.write(f"Number of features: {len(features)}\n")
-        f.write("\nPerformance of all models:\n")
-        for model_name, metrics in results.items():
-            if "test_accuracy" in metrics:
-                f.write(f"  • {model_name}: {metrics['test_accuracy']:.3f}\n")
-
-    print(f"Metadata saved: {metadata_path}")
-    print(f"Package size: {os.path.getsize(package_path) / 1024 / 1024:.2f} MB")
-
-    return model_package
-
-
-def generate_visualization_report(models, results, X_test, y_test):
-    """Generate a visualization report for the models."""
-    from src.visualization.plots import create_visualization_report
-
-    print("Generating visualization report...")
-    try:
-        create_visualization_report(models, results, X_test, y_test)
-        print("Visualization report generated")
-    except Exception as e:
-        print(f"Warning: Visualization report generation failed: {e}")
-
-
-def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
-    """Train and save all scikit-survival models"""
-    models = {}
-
-    # Cox Proportional Hazards
-    print("Training Cox model...")
-    cox = train_cox_model(X_train, y_train)
-    cox_path = save_model(cox, "cox", COX_PARAMS)
-    models["cox"] = {"model": cox, "path": cox_path, "params": COX_PARAMS}
-
-    # Random Survival Forest
-    print("Training Random Survival Forest model...")
-    rsf = train_rsf_model(X_train, y_train)
-    rsf_path = save_model(rsf, "rsf", RSF_PARAMS)
-    models["rsf"] = {"model": rsf, "path": rsf_path, "params": RSF_PARAMS}
-
-    # Gradient Boosting Survival Analysis
-    print("Training Gradient Boosting model...")
-    xgb = train_gradient_boosting_model(X_train, y_train)
-    xgb_path = save_model(xgb, "gradient_boosting", GRADIENT_BOOSTING_PARAMS)
-    models["gradient_boosting"] = {
-        "model": xgb,
-        "path": xgb_path,
-        "params": GRADIENT_BOOSTING_PARAMS,
-    }
-
-    # CoxNet (Cox avec régularisation)
-    print("Training CoxNet model...")
-    try:
-        coxnet = train_coxnet_model(X_train, y_train)
-        coxnet_path = save_model(coxnet, "coxnet", COXNET_PARAMS)
-        models["coxnet"] = {
-            "model": coxnet,
-            "path": coxnet_path,
-            "params": COXNET_PARAMS,
-        }
-    except Exception as e:
-        print(f"  Error CoxNet: {e}")
-
-    # Extra Survival Trees
-    print("Training Extra Survival Trees model...")
-    try:
-        extra_trees = train_extra_trees_model(X_train, y_train)
-        extra_trees_path = save_model(extra_trees, "extra_trees", EXTRA_TREES_PARAMS)
-        models["extra_trees"] = {
-            "model": extra_trees,
-            "path": extra_trees_path,
-            "params": EXTRA_TREES_PARAMS,
-        }
-    except Exception as e:
-        print(f"   Error Extra Trees: {e}")
-
-    # Componentwise Gradient Boosting
-    print("Training Componentwise Gradient Boosting model...")
-    try:
-        comp_gb = train_componentwise_gb_model(X_train, y_train)
-        comp_gb_path = save_model(comp_gb, "componentwise_gb", COMPONENTWISE_GB_PARAMS)
-        models["componentwise_gb"] = {
-            "model": comp_gb,
-            "path": comp_gb_path,
-            "params": COMPONENTWISE_GB_PARAMS,
-        }
-    except Exception as e:
-        print(f"  Error Componentwise GB: {e}")
-
-    # PyCox DeepSurv
-    if PYCOX_AVAILABLE:
-        print("Training PyCox DeepSurv model...")
-        try:
-            pycox_deepsurv = train_pycox_deepsurv_model(X_train, y_train, X_val, y_val)
-            pycox_path = save_model(
-                pycox_deepsurv, "pycox_deepsurv", PYCOX_DEEPSURV_PARAMS
-            )
-            models["pycox_deepsurv"] = {
-                "model": pycox_deepsurv,
-                "path": pycox_path,
-                "params": PYCOX_DEEPSURV_PARAMS,
-            }
-        except Exception as e:
-            print(f"   Error PyCox DeepSurv: {e}")
-    else:
-        print("   PyCox not available, DeepSurv ignored")
+    # Nous avons mis PyCox de côté pour l'instant pour simplifier.
 
     return models
