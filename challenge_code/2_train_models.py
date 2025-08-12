@@ -5,7 +5,8 @@ Script 2/3: Model Training, Evaluation & Selection via Cross-Validation
 This script performs a robust evaluation of multiple survival models using
 k-fold cross-validation to identify the best performing model based on the
 IPCW concordance index. The champion model is then retrained on the entire
-dataset and saved as a complete, ready-to-use prediction pipeline.
+dataset and saved as a complete, ready-to-use prediction pipeline. Finally,
+it generates a visual report comparing model performances and feature importances.
 """
 import os
 import joblib
@@ -16,11 +17,9 @@ from sksurv.metrics import concordance_index_ipcw
 from sklearn.pipeline import Pipeline
 
 # --- Import from your project structure ---
-# Make sure these paths are correct for your project layout
 from src.modeling.train import load_training_dataset_csv, get_survival_models
-from src.modeling.pipeline_components import (
-    get_preprocessing_pipeline,
-)  # We need to create this function
+from src.modeling.pipeline_components import get_preprocessing_pipeline
+from src.visualization.visualize import generate_post_training_report
 
 
 def main():
@@ -30,15 +29,16 @@ def main():
     print("=" * 80)
 
     # --- 1. LOAD PREPARED DATASET ---
-    print("\n[STEP 1/5] Loading the prepared dataset...")
+    print("\n[STEP 1/6] Loading the prepared dataset...")
     try:
         X, y = load_training_dataset_csv(
-            X_train_path="datasets_featured/X_train_featured.csv",
-            y_train_path="datasets_featured/y_train_featured.csv",
+            X_train_path="datasets_processed/X_train_processed.csv",
+            y_train_path="datasets_processed/y_train_processed.csv",
         )
-        # Drop ID from features, but keep it for later if needed
-        train_ids = X["ID"].copy()
-        X = X.drop(columns=["ID"])
+        # On a besoin des features sans l'ID pour l'entraînement
+        if "ID" in X.columns:
+            X = X.drop(columns=["ID"])
+
         features = X.columns.tolist()
         print(
             f"   -> Dataset loaded successfully: {X.shape[0]} samples, {X.shape[1]} features."
@@ -49,9 +49,9 @@ def main():
         return
 
     # --- 2. CONFIGURE CROSS-VALIDATION ---
-    print("\n[STEP 2/5] Configuring Cross-Validation...")
+    print("\n[STEP 2/6] Configuring Cross-Validation...")
     models_to_evaluate = get_survival_models()
-    N_SPLITS = 5  # 5 folds is a robust standard
+    N_SPLITS = 5
     kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
     cv_results = {name: [] for name in models_to_evaluate.keys()}
@@ -60,7 +60,10 @@ def main():
     print(f"   -> Using a {N_SPLITS}-fold cross-validation strategy.")
 
     # --- 3. RUN CROSS-VALIDATION LOOP ---
-    print("\n[STEP 3/5] Starting the cross-validation loop...")
+    print("\n[STEP 3/6] Starting the cross-validation loop...")
+
+    # Instancier le préprocesseur une seule fois avant la boucle
+    preprocessor = get_preprocessing_pipeline(X)
 
     for i, (train_idx, val_idx) in enumerate(kf.split(X)):
         print(f"\n--- FOLD {i+1}/{N_SPLITS} ---")
@@ -68,28 +71,21 @@ def main():
         X_train_fold, X_val_fold = X.iloc[train_idx], X.iloc[val_idx]
         y_train_fold, y_val_fold = y[train_idx], y[val_idx]
 
+        # Adapter le préprocesseur sur ce pli d'entraînement
+        preprocessor.fit(X_train_fold)
+        X_train_fold_processed = preprocessor.transform(X_train_fold)
+        X_val_fold_processed = preprocessor.transform(X_val_fold)
+
+        # Récupérer les noms de colonnes après transformation
+        processed_feature_names = X_train_fold_processed.columns.tolist()
+
         for name, model in models_to_evaluate.items():
             print(f"  > Training and evaluating: {name}")
             try:
-                # We use the raw (but feature-engineered) data here.
-                # The preprocessing pipeline will handle imputation and scaling inside the fit.
-                preprocessor = get_preprocessing_pipeline(X)
+                # Entraîner le modèle sur les données déjà prétraitées
+                model.fit(X_train_fold_processed, y_train_fold)
+                predictions = model.predict(X_val_fold_processed)
 
-                # Create a full pipeline for this fold
-                fold_pipeline = Pipeline(
-                    steps=[("preprocessor", preprocessor), ("model", model)]
-                )
-
-                # Fit the entire pipeline on the training fold
-                fold_pipeline.fit(X_train_fold, y_train_fold)
-
-                # Predict on the validation fold
-                # Note: For scikit-survival, predict() returns a risk score.
-                predictions = fold_pipeline.predict(X_val_fold)
-
-                # Calculate IPCW C-index
-                # y_train_fold is used to learn the censoring distribution
-                # y_val_fold is used for the actual evaluation
                 score = concordance_index_ipcw(y_train_fold, y_val_fold, predictions)[0]
                 cv_results[name].append(score)
                 print(f"    IPCW C-index on this fold: {score:.4f}")
@@ -100,7 +96,7 @@ def main():
 
     # --- 4. ANALYZE RESULTS AND SELECT BEST MODEL ---
     print("\n\n" + "=" * 80)
-    print("[STEP 4/5] Analyzing cross-validation results")
+    print("[STEP 4/6] Analyzing cross-validation results")
     print("=" * 80)
 
     final_scores = {}
@@ -130,35 +126,28 @@ def main():
     # --- 5. FINALIZE AND SAVE THE PREDICTION PIPELINE ---
     print("\n" + "=" * 80)
     print(
-        f"[STEP 5/5] Finalizing: Retraining '{best_model_name}' on all data and saving pipeline"
+        f"[STEP 5/6] Finalizing: Retraining '{best_model_name}' on all data and saving pipeline"
     )
     print("=" * 80)
 
-    # Instantiate the final preprocessor and the champion model
+    # Ré-entraîner le préprocesseur sur 100% des données
     final_preprocessor = get_preprocessing_pipeline(X)
-    final_best_model = get_survival_models()[best_model_name]
+    final_preprocessor.fit(X)
 
-    # Create the final, complete pipeline
+    # Ré-entraîner le meilleur modèle sur 100% des données prétraitées
+    X_processed = final_preprocessor.transform(X)
+    final_best_model = get_survival_models()[best_model_name]
+    final_best_model.fit(X_processed, y)
+
+    # Créer la pipeline finale contenant les deux étapes entraînées
     final_prediction_pipeline = Pipeline(
         steps=[("preprocessor", final_preprocessor), ("model", final_best_model)]
     )
 
-    # Fit the entire pipeline on 100% of the training data
-    # This ensures the model learns as much as possible before prediction
-    print("  > Fitting the final pipeline on the entire training dataset...")
-    final_prediction_pipeline.fit(X, y)
-
-    # Save the single, powerful pipeline object
     os.makedirs("models", exist_ok=True)
     pipeline_path = os.path.join("models", "final_prediction_pipeline.joblib")
     joblib.dump(final_prediction_pipeline, pipeline_path)
-
     print(f"  > Final prediction pipeline saved successfully to: '{pipeline_path}'")
-
-    print("\n" + "=" * 80)
-    print("SCRIPT 2/3 COMPLETED SUCCESSFULLY!")
-    print("The final pipeline is ready for making predictions on new data.")
-    print("=" * 80)
 
 
 if __name__ == "__main__":

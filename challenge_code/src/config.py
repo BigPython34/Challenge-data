@@ -133,63 +133,71 @@ GENE_PATHWAYS = {
 # Model parameters
 TAU = 7  # For C-index calculation
 
-# Survival model parameters
-COX_PARAMS = {"alpha": 0.2, "n_iter": 10}
-
-
 RSF_PARAMS = {
-    "n_estimators": 300,
-    "min_samples_split": 15,
-    "min_samples_leaf": 15,
-    "max_depth": None,
-    "max_features": 0.2,
+    "n_estimators": 400,  # Assez d'arbres pour stabiliser les prédictions.
+    "max_depth": 15,  # IMPORTANT: On limite la profondeur pour éviter l'overfitting.
+    "min_samples_split": 20,  # Régularisation : ne pas splitter de petits nœuds.
+    "min_samples_leaf": 10,  # Régularisation forte : chaque feuille doit être bien peuplée.
+    "max_features": "sqrt",  # Standard pour la robustesse, force les arbres à être différents.
+    "n_jobs": -1,  # Utilise tous les cœurs du CPU.
 }
 
+# --- Gradient Boosting Survival Analysis (LE PLUS PROMETTEUR) ---
+# Souvent le plus performant. Les paramètres sont cruciaux.
+# Arbres très peu profonds, apprentissage lent, forte régularisation.
+GRADIENT_BOOSTING_PARAMS = {
+    "n_estimators": 500,  # Plus d'arbres car le learning_rate est faible.
+    "learning_rate": 0.05,  # Un taux d'apprentissage plus faible est plus robuste.
+    "max_depth": 3,  # RÈGLE D'OR : Garder les arbres très simples.
+    "subsample": 0.7,  # Régularisation forte : chaque arbre ne voit que 70% des données.
+    "min_samples_leaf": 20,  # Régularisation forte.
+    "min_samples_split": 40,  # Régularisation forte.
+    "loss": "coxph",  # La loss par défaut, très performante.
+}
 
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 800,
-    "learning_rate": 0.02,
+    "n_estimators": 500,
+    "learning_rate": 0.05,
     "max_depth": 3,
     "subsample": 0.7,
-    "min_samples_leaf": 30,
+    "min_samples_leaf": 20,
     "min_samples_split": 40,
+    "loss": "coxph",
+}
+# --- Cox Proportional Hazards ---
+# Notre baseline linéaire. Simple régularisation.
+COX_PARAMS = {
+    "alpha": 0.1,  # Une petite pénalité Ridge pour la stabilité numérique.
+    "n_iter": 100,  # Plus d'itérations pour assurer la convergence.
 }
 
-"""
-GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": ,
-    "learning_rate": 0.1,
-    "max_depth": 3,
-    "subsample": 0.8,
-    "min_samples_leaf": 15,
-    "min_samples_split": 30,
-}"""
-# 0,7545788740320561 best
-
-
-# Parameters for CoxNet (Cox with regularization)
+# --- CoxNet (Cox avec régularisation ElasticNet) ---
+# TRÈS INTÉRESSANT dans votre cas car il fait de la sélection de features.
 COXNET_PARAMS = {
-    "l1_ratio": 0.5,  # Balance between L1 and L2 (0.9 = mainly L1)
-    "alphas": None,  # Auto-determination
-    "n_alphas": 100,
-    "normalize": True,
-    "max_iter": 10,
+    "l1_ratio": 0.95,  # Privilégier fortement le Lasso (L1) pour mettre à zéro les features inutiles.
+    "n_alphas": 100,  # Laisse scikit-survival trouver le meilleur alpha.
+    "max_iter": 20000,  # Augmenter significativement pour garantir la convergence.
 }
 
-# Parameters for Extra Survival Trees
+# --- Extra Survival Trees ---
+# Alternative au RSF, parfois plus robuste.
 EXTRA_TREES_PARAMS = {
-    "n_estimators": 30,
-    "min_samples_split": 35,
-    "min_samples_leaf": 8,
-    "max_depth": 10,
+    "n_estimators": 400,
+    "max_depth": 15,
+    "min_samples_split": 20,
+    "min_samples_leaf": 10,
+    "max_features": "sqrt",
+    "n_jobs": -1,
 }
 
-# Parameters for Componentwise Gradient Boosting
+# --- Component-wise Gradient Boosting ---
+# Moins prioritaire, mais peut surprendre.
 COMPONENTWISE_GB_PARAMS = {
-    "n_estimators": 5,
+    "n_estimators": 400,
     "learning_rate": 0.05,
-    "subsample": 1.0,
+    "subsample": 0.7,
 }
+
 
 # Parameters for PyCox DeepSurv
 PYCOX_DEEPSURV_PARAMS = {
@@ -205,73 +213,4 @@ PYCOX_DEEPSURV_PARAMS = {
     "lr_scheduler": True,  # Learning rate scheduler
     "lr_factor": 0.5,  # LR reduction factor
     "lr_patience": 50,  # Patience for scheduler
-}
-
-# Advanced imputation parameters
-IMPUTATION_PARAMS = {
-    "knn_neighbors": 7,  # Increased for more robustness
-    "cluster_n_clusters": 8,  # More clusters for better precision
-    "rf_n_estimators": 100,  # More estimators for Random Forest
-    "bagging_n_estimators": 1000,  # More estimators for bagging
-    "outlier_multiplier": 1.8,  # Less restrictive on outliers
-    "iterative_max_iter": 20,  # Number of iterations for iterative imputation
-}
-
-
-DATA_PREPARATION_CONFIG = {
-    "pipeline": {
-        "test_size": 0.3,  # Plus grande validation pour plus de robustesse
-        "use_advanced_features": True,
-        "include_molecular_burden": True,
-        "include_cytogenetic_features": True,
-        "include_interaction_features": True,
-    },
-    "imputation": {
-        "strategy": "medical_informed",  # medical_informed, median, mean, knn, iterative, regression
-        "fill_missing_with_zero": ["mutations", "molecular"],
-        "fill_missing_with_median": ["clinical_numeric"],
-        "fill_missing_with_mode": ["clinical_categorical"],
-    },
-    "feature_engineering": {
-        "clinical": {
-            "create_ratios": True,
-            "create_thresholds": True,
-            "create_composite_scores": True,
-            "create_log_transforms": True,
-        },
-        "molecular": {
-            "extract_binary_mutations": True,
-            "extract_vaf_features": True,
-            "extract_mutation_types": True,
-            "extract_comutation_patterns": True,
-            "extract_pathway_alterations": True,
-        },
-        "cytogenetic": {
-            "extract_eln2022_abnormalities": True,
-            "calculate_complexity": True,
-            "extract_chromosome_features": True,
-            "calculate_risk_scores": True,
-        },
-        "integrated": {
-            "create_eln2022_risk_scores": True,
-            "create_interaction_features": True,
-            "create_comprehensive_scores": True,
-        },
-    },
-    "quality_control": {
-        "remove_low_variance_features": True,
-        "variance_threshold": 0.01,
-        "remove_highly_correlated": True,
-        "correlation_threshold": 0.95,
-        "handle_outliers": True,
-        "outlier_method": "clip",  # clip, remove, transform
-    },
-    "output": {
-        "save_datasets": True,
-        "save_metadata": True,
-        "save_feature_importance": True,
-        "create_visualizations": True,
-        "datasets_dir": "datasets",
-        "models_dir": "models",
-    },
 }

@@ -122,11 +122,3 @@ def run_comprehensive_data_discovery(clinical_path: str, molecular_path: str):
 
     except FileNotFoundError:
         print(f"ERREUR: Fichier clinique non trouvé à {clinical_path}")
-
-
-# --- COMMENT UTILISER LE SCRIPT ---
-if __name__ == "__main__":
-    CLINICAL_FILE_PATH = "challenge_code/datas/X_train/clinical_train.csv"
-    MOLECULAR_FILE_PATH = "challenge_code/datas/X_train/molecular_train_filled.csv"
-
-    run_comprehensive_data_discovery(CLINICAL_FILE_PATH, MOLECULAR_FILE_PATH)

@@ -75,8 +75,14 @@ def main():
     )
 
     total_cleaned += clean_directory(
+        "datasets_processed", ["*.csv"], extensions_only=True
+    )
+
+    total_cleaned += clean_directory(
         ".", ["*.png", "*.jpg", "*.pdf"], extensions_only=True
     )
+
+    total_cleaned += clean_directory("submissions", ["*.csv"], extensions_only=True)
 
     total_cleaned += clean_directory(".", "__pycache__")
     total_cleaned += clean_directory("src", "__pycache__")

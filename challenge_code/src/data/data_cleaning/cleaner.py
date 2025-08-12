@@ -9,6 +9,44 @@ from typing import Tuple
 import pandas as pd
 import numpy as np
 from ...config import CLINICAL_RANGES
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class ClipQuantiles(BaseEstimator, TransformerMixin):
+    """
+    Clippe les colonnes et est maintenant 100% compatible avec l'API set_output.
+    """
+
+    def __init__(self, lower=0.01, upper=0.99):
+        self.lower = lower
+        self.upper = upper
+
+    def fit(self, X, y=None):
+        # S'assurer que X est un DataFrame pour utiliser .quantile
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        self.lower_bounds_ = X.quantile(self.lower)
+        self.upper_bounds_ = X.quantile(self.upper)
+        self.feature_names_in_ = X.columns.tolist()
+        return self
+
+    def transform(self, X) -> pd.DataFrame:
+        """Applique le clipping tout en garantissant la préservation de l'index."""
+        return X.clip(lower=self.lower_bounds_, upper=self.upper_bounds_, axis=1)
+
+    # --- AJOUT CRUCIAL POUR LA COMPATIBILITÉ ---
+    def set_output(self, transform=None):
+        """
+        Méthode requise par scikit-learn pour gérer la configuration de la sortie.
+        """
+        return self
+
+    def get_feature_names_out(self, input_features=None):
+        """
+        Méthode requise pour propager les noms de colonnes dans la pipeline.
+        """
+        return self.feature_names_in_
 
 
 def clean_and_validate_data(

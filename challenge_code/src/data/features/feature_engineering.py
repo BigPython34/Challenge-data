@@ -22,6 +22,8 @@ from ...config import (
     GENE_PATHWAYS,
 )
 
+from src.data.data_extraction.external_data_manager import ExternalDataManager
+
 
 class ClinicalFeatureEngineering:
     """Handles clinical feature creation."""
@@ -253,8 +255,15 @@ class CytogeneticFeatureExtraction:
         ].max(axis=1)
 
         # === INTERMEDIATE ABNORMALITIES ===
-        result_df["normal_karyotype"] = cytogenetics.str.match(
-            CYTOGENETIC_INTERMEDIATE[0], na=False
+        # Normal karyotype: allow trailing clone counts or additional notations, but exclude any abnormal markers
+        has_normal_code = cytogenetics.str.contains(
+            r"\b46,XX\b|\b46,XY\b", case=False, na=False
+        )
+        has_abnormal_markers = cytogenetics.str.contains(
+            r"del\(|inv\(|t\(|add\(|der\(|ins\(|i\(|\+|-", case=False, na=False
+        )
+        result_df["normal_karyotype"] = (
+            has_normal_code & ~has_abnormal_markers
         ).astype(int)
         result_df["trisomy_8"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[1])
 
@@ -282,18 +291,24 @@ class CytogeneticFeatureExtraction:
 
         # Count total abnormalities
         def count_abnormalities(cyto_string):
-            if not isinstance(cyto_string, str) or cyto_string == "":
+            if not isinstance(cyto_string, str) or cyto_string.strip() == "":
                 return 0
-            # Ignorer le comptage de base comme 46,xy
-            # Ne garder que ce qui suit le premier ou deuxième comma
+            # Skip the baseline chromosome count (e.g., 46,XX/XY) and clone counts
             parts = cyto_string.split(",")
             if len(parts) <= 2:
                 return 0
             abnormalities_str = ",".join(parts[2:])
-            # Compter les anomalies structurales (t, del, inv, add, der) et numériques (+, -)
-            # C'est une heuristique plus avancée
-            count = len(re.findall(r"[t,del,inv,add,der,ins,\+,-]", abnormalities_str))
-            return count
+            # Count structural events: t(), del(), inv(), add(), der(), ins(), i()
+            structural = re.findall(
+                r"t\(|del\(|inv\(|add\(|der\(|ins\(|i\(",
+                abnormalities_str,
+                flags=re.IGNORECASE,
+            )
+            # Count numerical gains/losses like +8, -7, +mar
+            numerical = re.findall(
+                r"[\+\-](?:\d+|X|Y|mar)", abnormalities_str, flags=re.IGNORECASE
+            )
+            return len(structural) + len(numerical)
 
         # Appliquer cette fonction à la colonne
         result_df["num_cyto_abnormalities"] = cytogenetics.apply(count_abnormalities)
@@ -402,15 +417,44 @@ class MolecularFeatureExtraction:
         """Extract VAF-based features for prognostically important genes."""
         vaf_important_genes = ["TP53", "FLT3", "NPM1", "CEBPA", "DNMT3A"]
 
+        if "VAF" in maf_df.columns:
+            maf_df = maf_df.copy()
+            maf_df["VAF"] = pd.to_numeric(maf_df["VAF"], errors="coerce")
+
         for gene in vaf_important_genes:
             if gene in maf_df["GENE"].values:
-                gene_vaf = maf_df[maf_df["GENE"] == gene].groupby("ID")["VAF"].max()
+                gene_rows = maf_df[maf_df["GENE"] == gene]
+                gene_vaf = (
+                    gene_rows.groupby("ID")["VAF"].max()
+                    if "VAF" in gene_rows.columns
+                    else pd.Series(dtype=float)
+                )
                 molecular_df[f"vaf_max_{gene}"] = molecular_df.index.map(
                     gene_vaf
                 ).fillna(0)
-                molecular_df[f"{gene}_high_VAF"] = (
-                    molecular_df[f"vaf_max_{gene}"] > 0.5
-                ).astype(int)
+
+                # Gene-specific high-VAF thresholds (FLT3 often uses lower allelic ratio thresholds)
+                if gene == "FLT3":
+                    # Detect ITD even if VAF missing
+                    has_itd_by_text = (
+                        gene_rows[
+                            [
+                                c
+                                for c in ["EFFECT", "PROTEIN_CHANGE"]
+                                if c in gene_rows.columns
+                            ]
+                        ]
+                        .astype(str)
+                        .apply(lambda s: s.str.contains("ITD", case=False, na=False))
+                        .any(axis=1)
+                    )
+                    itd_ids = set(gene_rows.loc[has_itd_by_text, "ID"].astype(str))
+                    high_vaf = (
+                        molecular_df[f"vaf_max_{gene}"] > 0.25
+                    ) | molecular_df.index.astype(str).isin(itd_ids)
+                else:
+                    high_vaf = molecular_df[f"vaf_max_{gene}"] > 0.5
+                molecular_df[f"{gene}_high_VAF"] = high_vaf.astype(int)
             else:
                 molecular_df[f"vaf_max_{gene}"] = 0.0
                 molecular_df[f"{gene}_high_VAF"] = 0
@@ -593,56 +637,89 @@ class MolecularFeatureExtraction:
             else None
         )
 
-    # Ajoutez cette méthode DANS la classe MolecularFeatureExtraction
-
     @staticmethod
-    def create_all_molecular_features(
+    def _extract_impact_features(
         base_df: pd.DataFrame, maf_df: pd.DataFrame
     ) -> pd.DataFrame:
         """
-        Orchestrateur pour créer ET COMBINER toutes les features moléculaires (risque et charge).
-        Ceci permet de ne faire qu'une seule fusion dans le script principal.
-
-        Parameters
-        ----------
-        base_df : pd.DataFrame
-            DataFrame de base contenant la colonne 'ID' des patients.
-        maf_df : pd.DataFrame
-            DataFrame brut des mutations.
-
-        Returns
-        -------
-        pd.DataFrame
-            Un unique DataFrame contenant toutes les features moléculaires, avec une colonne 'ID'.
+        Crée des features agrégées par patient basées sur la colonne 'IMPACT'.
         """
-        print("    -> Extraction des features de risque (mutations, VAF, pathways)...")
-        risk_features = MolecularFeatureExtraction.extract_molecular_risk_features(
-            base_df, maf_df.copy()
+        print(
+            "    -> Création des features basées sur l'impact des mutations (HIGH, MODERATE...)..."
+        )
+        if "IMPACT" not in maf_df.columns:
+            print(
+                "       [AVERTISSEMENT] Colonne 'IMPACT' non trouvée. Features d'impact ignorées."
+            )
+            return pd.DataFrame(index=base_df["ID"].unique())
+
+        # S'assurer que la colonne est de type catégoriel pour un one-hot encoding propre
+        maf_df["IMPACT"] = maf_df["IMPACT"].astype("category")
+
+        # One-hot encode la colonne IMPACT
+        impact_dummies = pd.get_dummies(
+            maf_df["IMPACT"], prefix="impact", dummy_na=False
         )
 
-        print(
-            "    -> Extraction des features de charge (nombre de mutations, stats VAF)..."
+        # Concaténer l'ID pour le groupby
+        impact_with_id = pd.concat([maf_df["ID"], impact_dummies], axis=1)
+
+        # Agréger par patient : on compte combien de mutations de chaque type d'impact il a
+        impact_features = impact_with_id.groupby("ID").sum()
+
+        return impact_features.reset_index()
+
+    @staticmethod
+    def create_all_molecular_features(
+        base_df: pd.DataFrame,
+        maf_df: pd.DataFrame,
+        external_data_manager: ExternalDataManager,
+    ) -> pd.DataFrame:
+        """
+        Orchestrateur final pour créer TOUTES les features moléculaires, y compris externes et d'impact.
+        """
+        # --- Enrichir maf_df avec les données de COSMIC/OncoKB ---
+        if not external_data_manager.gene_info_data.empty:
+            maf_df = maf_df.merge(
+                external_data_manager.get_gene_info(),
+                left_on="GENE",
+                right_index=True,
+                how="left",
+            ).fillna({"is_oncogene": 0, "is_tumor_suppressor": 0})
+
+        # --- Extraction des différents types de features ---
+        risk_features = MolecularFeatureExtraction.extract_molecular_risk_features(
+            base_df, maf_df
         )
         burden_features = MolecularFeatureExtraction.create_molecular_burden_features(
-            maf_df.copy()
+            maf_df
+        )
+        impact_features = MolecularFeatureExtraction._extract_impact_features(
+            base_df, maf_df
         )
 
-        # Fusionner les deux types de features moléculaires en un seul DataFrame
-        if not risk_features.empty and not burden_features.empty:
-            # La fusion 'outer' garantit qu'on ne perd aucun patient si jamais
-            # il apparaissait dans un set de features et pas l'autre (peu probable mais sûr).
-            all_molecular_df = pd.merge(
-                risk_features, burden_features, on="ID", how="outer"
+        # Créer des features agrégées à partir des données externes (oncogene/tsg)
+        external_features = pd.DataFrame(index=base_df["ID"].unique())
+        if "is_oncogene" in maf_df.columns:
+            oncogene_counts = maf_df.groupby("ID")["is_oncogene"].sum()
+            tsg_counts = maf_df.groupby("ID")["is_tumor_suppressor"].sum()
+            external_features["num_oncogene_muts"] = external_features.index.map(
+                oncogene_counts
             )
-        elif not risk_features.empty:
-            all_molecular_df = risk_features
-        elif not burden_features.empty:
-            all_molecular_df = burden_features
-        else:
-            # Si aucune feature n'a pu être créée, on retourne un df vide avec juste l'ID
-            return pd.DataFrame(columns=["ID"])
+            external_features["num_tsg_muts"] = external_features.index.map(tsg_counts)
+        external_features = (
+            external_features.reset_index().rename(columns={"index": "ID"}).fillna(0)
+        )
 
-        return all_molecular_df
+        # --- Fusionner tous les DataFrames moléculaires en un seul ---
+        all_molecular_df = risk_features
+        for df_to_merge in [burden_features, external_features, impact_features]:
+            if not df_to_merge.empty:
+                all_molecular_df = pd.merge(
+                    all_molecular_df, df_to_merge, on="ID", how="outer"
+                )
+
+        return all_molecular_df.fillna(0)
 
 
 class IntegratedFeatureEngineering:

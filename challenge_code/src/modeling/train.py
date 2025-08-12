@@ -31,7 +31,6 @@ except ImportError:
 
 from ..config import (
     SEED,
-    MODEL_DIR,
     COX_PARAMS,
     RSF_PARAMS,
     GRADIENT_BOOSTING_PARAMS,
@@ -363,29 +362,6 @@ def train_componentwise_gb_model(
     )
     comp_gb.fit(X_train, y_train)
     return comp_gb
-
-
-def save_model(model, model_name, params=None):
-    """Save a model with a name based on its parameters"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if params:
-        param_str = "_".join([f"{k}{v}" for k, v in params.items()])
-        filename = f"{model_name}_{param_str}_{timestamp}.pkl"
-    else:
-        filename = f"{model_name}_{timestamp}.pkl"
-
-    filepath = os.path.join(MODEL_DIR, filename)
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    joblib.dump(model, filepath)
-    print(f"Model saved: {filepath}")
-    return filepath
-
-
-def load_model(filepath):
-    """Load a saved model"""
-    return joblib.load(filepath)
 
 
 def load_training_dataset(dataset_path):

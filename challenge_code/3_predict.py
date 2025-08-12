@@ -32,7 +32,7 @@ def predict_and_submit():
     # --- 2. CHARGEMENT ET PRÉPARATION DES DONNÉES DE TEST ---
     # Nous avons besoin des données de test AVANT le prétraitement (juste après le feature engineering)
     print("\n2. Chargement des données de test (post-feature engineering)...")
-    X_test_featured_path = "datasets_featured/X_test_featured.csv"  # Le fichier sauvegardé à l'étape 4.25 de 1_prepare_data.py
+    X_test_featured_path = "datasets_processed/X_test_processed.csv"  # Le fichier sauvegardé à l'étape 4.25 de 1_prepare_data.py
     try:
         X_test_featured = pd.read_csv(X_test_featured_path)
         ids = X_test_featured["ID"].copy()
