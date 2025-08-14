@@ -1,144 +1,196 @@
 #!/usr/bin/env python3
 """
-Script 2c: Systematic Ensemble Finder via Out-of-Fold Predictions
+Unified Training Script: Train All Models, Search Ensembles, Save Models
 
-This script performs a single robust cross-validation run to train multiple base
-models. It stores their out-of-fold (OOF) predictions and then uses these
-predictions to efficiently test dozens of rank-averaging ensemble combinations,
-identifying the blend with the highest overall IPCW C-index.
+This script:
+  1) Loads processed training data (feature-engineered + preprocessed),
+  2) Generates Out-of-Fold predictions for all base models using GroupKFold (by center) when available,
+  3) Evaluates every rank-averaging ensemble combination to find the best blend (IPCW C-index, with TAU),
+  4) Retrains each base model on 100% of the processed training data and saves them separately.
+Optionally, it writes a CSV report of base and ensemble scores.
 """
 import os
 import itertools
+import json
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold
+from sklearn.model_selection import GroupKFold, KFold
 from sksurv.metrics import concordance_index_ipcw
-from scipy.stats import rankdata
-
-# --- Import from your project structure ---
 from src.modeling.train import load_training_dataset_csv, get_survival_models
-from src.modeling.pipeline_components import get_preprocessing_pipeline
+from src.config import TAU, PREPROCESSING, EXPERIMENT
+from src.utils.experiment import compute_tag, ensure_experiment_dir
 
 
 def main():
     print("=" * 80)
-    print(" SCRIPT 2c: SYSTEMATIC ENSEMBLE FINDER")
+    print(" UNIFIED TRAINING: ALL MODELS + ENSEMBLE SEARCH + SAVE MODELS")
     print("=" * 80)
 
-    # --- 1. LOAD DATASET ---
-    print("\n[STEP 1/4] Loading the prepared dataset...")
+    # --- 0) TAG & EXPERIMENT DIR ---
+    cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
+    tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
+    exp_dir = ensure_experiment_dir(tag)
+    train_dir = os.path.join(exp_dir, "train")
+    os.makedirs(train_dir, exist_ok=True)
+
+    # --- 1) LOAD PROCESSED DATA ---
+    print("\n[STEP 1/4] Loading processed training data...")
     X, y = load_training_dataset_csv(
         X_train_path="datasets_processed/X_train_processed.csv",
         y_train_path="datasets_processed/y_train_processed.csv",
     )
+    groups = None
+    if "CENTER_GROUP" in X.columns:
+        groups = X["CENTER_GROUP"].astype(str).values
+        X = X.drop(columns=["CENTER_GROUP"])  # not a feature
     if "ID" in X.columns:
-        X = X.drop(columns=["ID"])
-    print(f"   -> Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features.")
+        X = X.drop(columns=["ID"])  # not a feature
+    print(f"   -> Dataset: {X.shape[0]} samples, {X.shape[1]} features.")
+    # Save dataset shape in training report stub
+    training_report = {
+        "dataset": {"n_samples": int(X.shape[0]), "n_features": int(X.shape[1])},
+        "cv": {},
+        "models": {},
+        "base_scores": {},
+        "best_ensemble": {},
+    }
 
-    # --- 2. CONFIGURE MODELS AND CV ---
-    print("\n[STEP 2/4] Configuring Models and Cross-Validation...")
-    models_to_train = get_survival_models()
-    # On peut exclure les modèles les moins performants si on le souhaite
-    # models_to_train.pop("ComponentwiseGB", None)
+    # --- 2) CONFIGURE MODELS + CV & OOF ---
+    print("\n[STEP 2/4] Configuring models and cross-validation...")
+    models = get_survival_models()  # dict[str, estimator]
+    model_names = list(models.keys())
+    print(f"   -> Models: {model_names}")
 
     N_SPLITS = 5
-    kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+    if groups is not None:
+        splitter = GroupKFold(n_splits=N_SPLITS)
+        split_iter = splitter.split(X, groups=groups)
+        training_report["cv"] = {"type": "GroupKFold", "n_splits": N_SPLITS}
+    else:
+        splitter = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+        split_iter = splitter.split(X)
+        training_report["cv"] = {
+            "type": "KFold",
+            "n_splits": N_SPLITS,
+            "shuffle": True,
+            "random_state": 42,
+        }
 
-    # DataFrame pour stocker les prédictions Out-of-Fold (OOF)
-    oof_predictions = pd.DataFrame(index=X.index, columns=models_to_train.keys())
+    oof_predictions = pd.DataFrame(index=X.index, columns=model_names, dtype=float)
+    fold_scores = {name: [] for name in model_names}
+    # Record model params for traceability
+    for name, est in models.items():
+        try:
+            training_report["models"][name] = est.get_params(deep=False)
+        except Exception:
+            training_report["models"][name] = "<params_unavailable>"
 
-    print(f"   -> {len(models_to_train)} base models will be trained.")
-    print(f"   -> Using a {N_SPLITS}-fold cross-validation strategy.")
+    print("\n[STEP 2.1] Generating Out-of-Fold (OOF) predictions...")
+    for i, (tr_idx, va_idx) in enumerate(split_iter, start=1):
+        print(f"\n--- FOLD {i}/{N_SPLITS} ---")
+        X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
+        y_tr, y_va = y[tr_idx], y[va_idx]
 
-    # --- 3. GENERATE OUT-OF-FOLD PREDICTIONS ---
-    print("\n[STEP 3/4] Generating Out-of-Fold (OOF) predictions...")
-    preprocessor = get_preprocessing_pipeline(X)
-
-    for i, (train_idx, val_idx) in enumerate(kf.split(X)):
-        print(f"\n--- FOLD {i+1}/{N_SPLITS} ---")
-        X_train_fold, X_val_fold = X.iloc[train_idx], X.iloc[val_idx]
-        y_train_fold, y_val_fold = y[train_idx], y[val_idx]
-
-        # Fit preprocessor on this fold's training data
-        preprocessor.fit(X_train_fold)
-        X_train_fold_processed = preprocessor.transform(X_train_fold)
-        X_val_fold_processed = preprocessor.transform(X_val_fold)
-
-        for name, model in models_to_train.items():
-            print(f"  > Training {name}...")
+        for name, est in models.items():
             try:
-                model.fit(X_train_fold_processed, y_train_fold)
-                # Faire des prédictions et les stocker à la bonne place dans le df OOF
-                predictions = model.predict(X_val_fold_processed)
-                oof_predictions.loc[val_idx, name] = predictions
+                est.fit(X_tr, y_tr)
+                preds = est.predict(X_va)
+                oof_predictions.loc[va_idx, name] = preds
+                # Per-fold score (using training fold as reference for IPCW)
+                fold_ipcw = concordance_index_ipcw(y_tr, y_va, preds, tau=TAU)[0]
+                fold_scores[name].append(fold_ipcw)
+                print(f"  {name:<20} fold IPCW: {fold_ipcw:.4f}")
             except Exception as e:
-                print(f"    /!\\ ERROR for model {name}: {e}")
+                print(f"  [WARN] {name} failed on fold: {e}")
+                fold_scores[name].append(np.nan)
 
-    # Vérifier si des prédictions ont échoué
+    # Remove models that failed entirely
     oof_predictions.dropna(axis=1, how="all", inplace=True)
-    print("\n✓ Out-of-Fold predictions generated for all models.")
+    valid_models = list(oof_predictions.columns)
+    print(f"\nValid models with OOF preds: {valid_models}")
 
-    # --- 4. EVALUATE ALL ENSEMBLE COMBINATIONS ---
-    print("\n[STEP 4/4] Evaluating all ensemble combinations...")
-
-    # Évaluer d'abord les modèles de base sur l'ensemble des prédictions OOF
-    base_model_scores = {}
-    for name in oof_predictions.columns:
-        preds = oof_predictions[name].values.astype(float)
-        score = concordance_index_ipcw(y, y, preds)[0]
-        base_model_scores[name] = score
-        print(f"  - Overall OOF Score for {name:<20}: {score:.5f}")
-
-    print("\n--- Testing Ensemble Combinations ---")
+    # --- 3) EVALUATE BASE MODELS AND ALL ENSEMBLES ---
+    print("\n[STEP 3/4] Evaluating base models and all rank-ensemble combinations...")
+    summary_rows = []
+    base_scores = {}
+    for name in valid_models:
+        preds = oof_predictions[name].astype(float).values
+        score = concordance_index_ipcw(y, y, preds, tau=TAU)[0]
+    base_scores[name] = score
+    summary_rows.append({"name": name, "size": 1, "score": score})
+    print(f"  Base OOF IPCW: {name:<20} = {score:.5f}")
+    training_report["base_scores"][name] = float(score)
 
     ensemble_results = []
-    model_names = list(oof_predictions.columns)
-
-    # Itérer sur toutes les tailles de combinaison possibles (paires, triplets, etc.)
-    for k in range(2, len(model_names) + 1):
-        # Générer toutes les combinaisons de k modèles
-        for combo in itertools.combinations(model_names, k):
+    for k in range(2, len(valid_models) + 1):
+        for combo in itertools.combinations(valid_models, k):
             combo_name = " + ".join(combo)
-            print(f"  > Testing: {combo_name}")
+            combo_ranks = oof_predictions[list(combo)].rank()
+            ensemble_rank_score = combo_ranks.mean(axis=1).values
+            ens_ipcw = concordance_index_ipcw(y, y, ensemble_rank_score, tau=TAU)[0]
+            ensemble_results.append((combo_name, k, ens_ipcw))
+            summary_rows.append({"name": combo_name, "size": k, "score": ens_ipcw})
+            print(f"  Ensemble OOF IPCW: {combo_name} = {ens_ipcw:.5f}")
 
-            # Récupérer les prédictions OOF pour les modèles de la combinaison
-            combo_preds_df = oof_predictions[list(combo)]
+    # Collate and save summary
+    summary_df = pd.DataFrame(summary_rows).sort_values("score", ascending=False)
+    os.makedirs("reports", exist_ok=True)
+    summary_path = os.path.join("reports", "ensemble_ranking.csv")
+    summary_df.to_csv(summary_path, index=False)
+    print(f"\nRanking saved to: {summary_path}")
+    # Also save into experiment directory
+    summary_path_tag = os.path.join(train_dir, "ensemble_ranking.csv")
+    summary_df.to_csv(summary_path_tag, index=False)
+    # Save OOF predictions and fold scores
+    oof_predictions.to_csv(os.path.join(train_dir, "oof_predictions.csv"), index=True)
+    with open(os.path.join(train_dir, "fold_scores.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                k: [None if pd.isna(v) else float(v) for v in vals]
+                for k, vals in fold_scores.items()
+            },
+            f,
+            indent=2,
+        )
 
-            # Transformer en classements
-            combo_ranks_df = combo_preds_df.rank()
+    best_name = summary_df.iloc[0]["name"]
+    best_score = summary_df.iloc[0]["score"]
+    print(f"\n---> Best combo: {best_name} (OOF IPCW={best_score:.5f})")
+    training_report["best_ensemble"] = {
+        "name": best_name,
+        "oof_ipcw": float(best_score),
+        "tau": TAU,
+    }
 
-            # Faire la moyenne des classements
-            ensemble_score_ranks = combo_ranks_df.mean(axis=1).values
+    # --- 4) RETRAIN ALL MODELS ON FULL DATA AND SAVE ---
+    print("\n[STEP 4/4] Retraining each base model on full data and saving...")
+    os.makedirs("models", exist_ok=True)
+    for name, est in models.items():
+        try:
+            est.fit(X, y)
+            out_path = os.path.join("models", f"model_{name}.joblib")
+            import joblib
 
-            # Évaluer l'ensemble
-            ensemble_ipcw = concordance_index_ipcw(y, y, ensemble_score_ranks)[0]
-            ensemble_results.append((combo_name, ensemble_ipcw))
-            print(f"    IPCW C-index: {ensemble_ipcw:.5f}")
+            joblib.dump(est, out_path)
+            print(f"  Saved: {out_path}")
+        except Exception as e:
+            print(f"  [WARN] Failed to save {name}: {e}")
 
-    # --- Afficher le classement final ---
-    print("\n\n" + "=" * 80)
-    print("  FINAL ENSEMBLE RANKING")
-    print("=" * 80)
+    # Save best ensemble descriptor for convenience
+    meta = {
+        "best_combo": best_name,
+        "best_oof_ipcw": float(best_score),
+        "models": valid_models,
+    }
+    with open(os.path.join("models", "ensemble_meta.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    # Save training report
+    with open(
+        os.path.join(train_dir, "training_report.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(training_report, f, indent=2)
 
-    # Combiner les scores de base et d'ensemble
-    final_ranking = {**base_model_scores}
-    for name, score in ensemble_results:
-        final_ranking[name] = score
-
-    # Trier par score, du meilleur au moins bon
-    sorted_ranking = sorted(
-        final_ranking.items(), key=lambda item: item[1], reverse=True
-    )
-
-    for name, score in sorted_ranking:
-        print(f"  {score:.5f} - {name}")
-
-    best_ensemble_name, best_ensemble_score = sorted_ranking[0]
-    print(
-        f"\n---> Best combination found: '{best_ensemble_name}' with a score of {best_ensemble_score:.5f}"
-    )
-
-    print("\n" + "=" * 80)
+    print("\nDone.")
 
 
 if __name__ == "__main__":

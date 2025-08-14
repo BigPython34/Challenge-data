@@ -1,23 +1,27 @@
 import os
 import pandas as pd
-import numpy as np
 from src.data.data_extraction.external_data_manager import ExternalDataManager
 from src.modeling.pipeline_components import get_preprocessing_pipeline
 import joblib
+from src.config import PREPROCESSING, EXPERIMENT, CLINICAL_RANGES
+from src.utils.experiment import compute_tag, save_manifest, save_feature_list
 
 # --- 1. IMPORTATION DE VOTRE LOGIQUE MÉTIER ---
 # Assurez-vous que le dossier 'src' est accessible depuis l'endroit où vous lancez ce script
 from src.data.data_cleaning.cleaner import clean_and_validate_data
+
 from src.data.features.feature_engineering import (
     ClinicalFeatureEngineering,
     CytogeneticFeatureExtraction,
     MolecularFeatureExtraction,
-    IntegratedFeatureEngineering,
 )
 
 
 # --- 2. IMPORTATION DES OUTILS DE MACHINE LEARNING ---
-from sklearn.experimental import enable_iterative_imputer
+from sklearn.experimental import (
+    enable_iterative_imputer,
+)  # noqa: F401 (side-effect import)
+from src.data.data_cleaning.imputer import supervised_monocyte_imputation
 
 
 # --- 4. FONCTION D'ORCHESTRATION DU FEATURE ENGINEERING ---
@@ -86,6 +90,34 @@ def main():
         cosmic_path=cosmic_path, oncokb_path=oncokb_file_path
     )
 
+    # --- Tag d'expérience et manifest ---
+    cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
+    tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
+    # Save manifest with preprocessing numeric details for traceability
+    extras = {
+        "preprocessing_report": {
+            "imputer_strategy": PREPROCESSING.get("imputer"),
+            "knn_n_neighbors": PREPROCESSING.get("knn", {}).get("n_neighbors"),
+            "iterative": PREPROCESSING.get("iterative"),
+            "clip_quantiles": PREPROCESSING.get("clip_quantiles"),
+            "numeric_scaler": PREPROCESSING.get("numeric_scaler"),
+            "monocyte_imputer": PREPROCESSING.get("monocyte_imputer"),
+        },
+        "clinical_ranges": CLINICAL_RANGES,
+    }
+    save_manifest(tag, full_config=cfg_slice, extra=extras)
+    print("[REPORT] Prétraitement: ")
+    print(
+        f"         - imputer: {PREPROCESSING.get('imputer')}\n"
+        f"         - knn.n_neighbors: {PREPROCESSING.get('knn', {}).get('n_neighbors')}\n"
+        f"         - iterative: {PREPROCESSING.get('iterative')}\n"
+        f"         - clip_quantiles: {PREPROCESSING.get('clip_quantiles')}\n"
+        f"         - numeric_scaler: {PREPROCESSING.get('numeric_scaler')}"
+    )
+    print("[REPORT] Bornes cliniques utilisées:")
+    for k, v in CLINICAL_RANGES.items():
+        print(f"         - {k}: {v}")
+
     # --- Configuration des chemins ---
     input_clinical_path = "datas/X_train/clinical_train.csv"
     input_molecular_path = "datas/X_train/molecular_train_filled.csv"
@@ -94,9 +126,7 @@ def main():
     input_molecular_test_path = "datas/X_test/molecular_test_filled.csv"
     output_dir = "datasets_processed"
     os.makedirs(output_dir, exist_ok=True)
-    output_X_train_path = os.path.join(output_dir, "X_train_processed.csv")
-    output_X_test_path = os.path.join(output_dir, "X_test_processed.csv")
-    output_y_train_path = os.path.join(output_dir, "y_train_processed.csv")
+    # Output paths (written below)
 
     # --- ÉTAPE 1 & 2: CHARGEMENT ET NETTOYAGE ---
     print("=" * 50)
@@ -149,6 +179,26 @@ def main():
     # Afficher les nouveaux effectifs pour vérification
     print("\nEffectifs après regroupement (sur le train set):")
     print(train_df["CENTER"].value_counts())
+    # Imputation supervisée des monocytes avant le feature engineering pour réduire le drift
+    try:
+        if (
+            EXPERIMENT.get("use_monocyte_supervised", False)
+            and "MONOCYTES" in train_df.columns
+        ):
+            mono_cfg = PREPROCESSING.get("monocyte_imputer", {})
+            train_df, test_df = supervised_monocyte_imputation(
+                train_df,
+                test_df,
+                keep_indicator=EXPERIMENT.get("keep_monocyte_indicator", False),
+                model_path=mono_cfg.get(
+                    "model_path", os.path.join("models", "monocyte_imputer.joblib")
+                ),
+                **{k: v for k, v in mono_cfg.items() if k not in {"model_path"}},
+            )
+    except (
+        Exception
+    ) as e:  # noqa: BLE001 (intentional broad catch to keep pipeline running)
+        print(f"[MONO] Imputation supervisée ignorée (erreur): {e}")
     # --- ÉTAPE 3: FEATURE ENGINEERING ---
     print("\n" + "=" * 50)
     print("ÉTAPE 3: FEATURE ENGINEERING")
@@ -176,12 +226,13 @@ def main():
     X_test_to_process = X_test_featured.drop(columns=["ID"], errors="ignore")
 
     # Retirer CENTER des features pour éviter un fort décalage train/test (test = CENTER_OTHER uniquement)
-    for df_name, df in [("train", X_train_to_process), ("test", X_test_to_process)]:
-        if "CENTER" in df.columns:
-            print(
-                f"[PREP] Suppression de la colonne CENTER du jeu {df_name} (éviter one-hot dégénéré)."
-            )
-            df.drop(columns=["CENTER"], inplace=True)
+    if not EXPERIMENT.get("use_center_ohe", False):
+        for df_name, df in [("train", X_train_to_process), ("test", X_test_to_process)]:
+            if "CENTER" in df.columns:
+                print(
+                    f"[PREP] Suppression de la colonne CENTER du jeu {df_name} (éviter one-hot dégénéré)."
+                )
+                df.drop(columns=["CENTER"], inplace=True)
 
     # Garantir la cohérence des colonnes entre train et test
     train_cols = X_train_to_process.columns
@@ -192,7 +243,9 @@ def main():
     print("ÉTAPE 5: PRÉTRAITEMENT (IMPUTATION, SCALING, ENCODING)")
     print("=" * 50)
 
-    preprocessor = get_preprocessing_pipeline(X_train_to_process, "iterative")
+    preprocessor = get_preprocessing_pipeline(
+        X_train_to_process, PREPROCESSING.get("imputer", "knn")
+    )
 
     # Entraîner le préprocesseur
     print("[PREPROCESSING] Entraînement du préprocesseur...")
@@ -211,10 +264,36 @@ def main():
     X_train_processed_df.insert(0, "ID", train_ids.values)
     X_test_processed_df.insert(0, "ID", test_ids.values)
 
+    # Ajouter un identifiant de groupe de centre pour la CV (non utilisé comme feature)
+    try:
+        center_map_train = train_df.set_index("ID")["CENTER"].astype(str)
+        center_map_test = test_df.set_index("ID")["CENTER"].astype(str)
+        X_train_processed_df.insert(
+            1,
+            "CENTER_GROUP",
+            X_train_processed_df["ID"]
+            .map(center_map_train)
+            .fillna("CENTER_OTHER")
+            .values,
+        )
+        X_test_processed_df.insert(
+            1,
+            "CENTER_GROUP",
+            X_test_processed_df["ID"]
+            .map(center_map_test)
+            .fillna("CENTER_OTHER")
+            .values,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[PREP] Impossible d'ajouter CENTER_GROUP (continuons sans): {e}")
+
     # --- ÉTAPE 5.1: SUPPRESSION DES FEATURES À VARIANCE NULLE (sur train OU test) ---
     drop_cols = []
     for col in X_train_processed_df.columns:
         if col == "ID":
+            continue
+        if col == "CENTER_GROUP":
+            # réservé pour la CV uniquement
             continue
         nunique_train = X_train_processed_df[col].nunique(dropna=False)
         nunique_test = X_test_processed_df[col].nunique(dropna=False)
@@ -247,6 +326,12 @@ def main():
     # Sauvegarde du préprocesseur ENTRAÎNÉ. C'est lui qui sera utilisé pour la prédiction finale.
     os.makedirs("models", exist_ok=True)
     joblib.dump(preprocessor, os.path.join("models", "preprocessor.joblib"))
+
+    # Enregistrer la liste des features finales pour la traçabilité
+    try:
+        save_feature_list(tag, X_train_processed_df.columns.tolist())
+    except Exception as e:  # noqa: BLE001
+        print(f"[TRACE] Impossible d'enregistrer la liste des features: {e}")
 
     print("Pipeline de préparation des données terminée avec succès.")
     print(f"Fichiers finaux prêts dans le dossier '{output_dir}'")

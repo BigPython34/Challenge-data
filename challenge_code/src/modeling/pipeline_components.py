@@ -1,11 +1,12 @@
 import pandas as pd
 
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import RobustScaler, OneHotEncoder
+from sklearn.preprocessing import RobustScaler, StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from ..data.data_cleaning.imputer import AdvancedImputer
 from ..data.data_cleaning.cleaner import ClipQuantiles
+from ..config import PREPROCESSING
 
 
 def get_preprocessing_pipeline(
@@ -41,6 +42,8 @@ def get_preprocessing_pipeline(
         "vaf_max_NPM1",
         "vaf_max_CEBPA",
         "vaf_max_DNMT3A",
+        "vaf_max_IDH1",
+        "vaf_max_IDH2",
         "total_mutations",
         "vaf_mean",
         "vaf_median",
@@ -59,12 +62,21 @@ def get_preprocessing_pipeline(
         f"   -> Features identifiées : {len(continuous_features)} continues, {len(discrete_features)} discrètes, {len(categorical_features)} catégorielles."
     )
 
-    # Définition des pipelines...
+    # Définition des pipelines (pilotées par la config)...
+    clip_lower = PREPROCESSING.get("clip_quantiles", {}).get("lower", 0.01)
+    clip_upper = PREPROCESSING.get("clip_quantiles", {}).get("upper", 0.99)
+    scaler_choice = PREPROCESSING.get("numeric_scaler", "robust")
+    scaler = StandardScaler() if scaler_choice == "standard" else RobustScaler()
+
+    adv_kwargs = {}
+    if strategy == "knn":
+        adv_kwargs["n_neighbors"] = PREPROCESSING.get("knn", {}).get("n_neighbors", 4)
+
     continuous_transformer = Pipeline(
         steps=[
-            ("clip", ClipQuantiles()),
-            ("imputer", AdvancedImputer(strategy=strategy)),
-            ("scaler", RobustScaler()),
+            ("clip", ClipQuantiles(lower=clip_lower, upper=clip_upper)),
+            ("imputer", AdvancedImputer(strategy=strategy, **adv_kwargs)),
+            ("scaler", scaler),
         ]
     )
 

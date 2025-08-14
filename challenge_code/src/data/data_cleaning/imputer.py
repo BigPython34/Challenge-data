@@ -1,9 +1,20 @@
 import pandas as pd
 from typing import List
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.experimental import enable_iterative_imputer
+from sklearn.experimental import (
+    enable_iterative_imputer,
+)  # noqa: F401 (side-effect import)
 from sklearn.impute import KNNImputer, IterativeImputer
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, RobustScaler
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import HistGradientBoostingRegressor
+import numpy as np
+import os
+import joblib
+import json
 
 
 class AdvancedImputer(BaseEstimator, TransformerMixin):
@@ -24,11 +35,11 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
             self.imputer_ = KNNImputer(n_neighbors=self.n_neighbors)
         elif self.strategy == "iterative":
             estimator = RandomForestRegressor(
-                n_estimators=30, random_state=42, n_jobs=-1
+                n_estimators=40, random_state=42, n_jobs=-1
             )
             self.imputer_ = IterativeImputer(
                 estimator=estimator,
-                max_iter=30,
+                max_iter=70,
                 random_state=42,
                 initial_strategy="median",
             )
@@ -69,3 +80,171 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features=None):
         """Méthode requise pour propager les noms de colonnes."""
         return self.feature_names_in_
+
+
+# --- Supervised imputation for MONOCYTES (train-only model, applied to train/test) ---
+def supervised_monocyte_imputation(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    keep_indicator: bool = False,
+    model_path: str = "models/monocyte_imputer.joblib",
+    predictors: dict | None = None,
+    preprocessing: dict | None = None,
+    regressor: dict | None = None,
+    clip_to_wbc: bool | None = None,
+    winsorize_pct: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if "MONOCYTES" not in train_df.columns:
+        print("[MONO] Colonne MONOCYTES absente. Aucune imputation supervisée.")
+        return train_df, test_df
+
+    # Ensure model directory exists
+    os.makedirs(os.path.dirname(model_path) or "models", exist_ok=True)
+
+    # Predictors available in clinical data
+    if predictors is None:
+        num_candidates = ["WBC", "ANC", "HB", "PLT", "BM_BLAST"]
+        cat_candidates = ["CENTER"]
+    else:
+        num_candidates = predictors.get("num", [])
+        cat_candidates = predictors.get("cat", [])
+
+    num_features = [c for c in num_candidates if c in train_df.columns]
+    cat_features = [c for c in cat_candidates if c in train_df.columns]
+
+    if not num_features and not cat_features:
+        print("[MONO] Aucune feature disponible pour imputer MONOCYTES. Abandon.")
+        return train_df, test_df
+
+    mask_obs = train_df["MONOCYTES"].notna()
+    if mask_obs.sum() < 50:
+        print(
+            f"[MONO] Trop peu de valeurs observées ({mask_obs.sum()}) pour imputer. Abandon."
+        )
+        return train_df, test_df
+
+    X_train = train_df.loc[mask_obs, num_features + cat_features].copy()
+    y_train = np.log1p(train_df.loc[mask_obs, "MONOCYTES"].astype(float).values)
+
+    # Ensure dense output for downstream regressor
+    ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+
+    # Build numeric preprocessing
+    pre_cfg = preprocessing or {"num_imputer": "median", "num_scaler": "standard"}
+    num_imputer_strategy = pre_cfg.get("num_imputer", "median")
+    num_scaler_kind = pre_cfg.get("num_scaler", "standard")
+    scaler = StandardScaler() if num_scaler_kind == "standard" else RobustScaler()
+    pre = ColumnTransformer(
+        transformers=[
+            (
+                "num",
+                Pipeline(
+                    [
+                        ("imp", SimpleImputer(strategy=num_imputer_strategy)),
+                        ("sc", scaler),
+                    ]
+                ),
+                num_features,
+            ),
+            ("cat", ohe, cat_features),
+        ],
+        remainder="drop",
+        verbose_feature_names_out=False,
+    )
+
+    # Build regressor
+    reg_cfg = regressor or {
+        "type": "HistGradientBoostingRegressor",
+        "learning_rate": 0.08,
+        "max_depth": None,
+        "max_iter": 400,
+        "l2_regularization": 0.0,
+        "random_state": 42,
+    }
+    reg_type = reg_cfg.get("type", "HistGradientBoostingRegressor")
+    if reg_type != "HistGradientBoostingRegressor":
+        raise ValueError(
+            f"Unsupported regressor type for MONOCYTES imputer: {reg_type}"
+        )
+    reg = HistGradientBoostingRegressor(
+        learning_rate=reg_cfg.get("learning_rate", 0.08),
+        max_depth=reg_cfg.get("max_depth", None),
+        max_iter=reg_cfg.get("max_iter", 400),
+        l2_regularization=reg_cfg.get("l2_regularization", 0.0),
+        random_state=reg_cfg.get("random_state", 42),
+    )
+
+    mono_pipe = Pipeline([("pre", pre), ("reg", reg)])
+    print(
+        f"[MONO] Entraînement de l'imputeur supervisé (n={mask_obs.sum()} lignes observées)..."
+    )
+    mono_pipe.fit(X_train, y_train)
+    joblib.dump(mono_pipe, model_path)
+
+    # Prepare meta for traceability
+    meta = {
+        "observed_n": int(mask_obs.sum()),
+        "predictors": {"num": num_features, "cat": cat_features},
+        "preprocessing": {
+            "num_imputer": num_imputer_strategy,
+            "num_scaler": num_scaler_kind,
+        },
+        "regressor": reg_cfg,
+        "postprocess": {
+            "clip_to_wbc": True if clip_to_wbc is None else bool(clip_to_wbc),
+            "winsorize_pct": 99.5 if winsorize_pct is None else float(winsorize_pct),
+        },
+    }
+
+    def _impute(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        miss_mask = out["MONOCYTES"].isna()
+        if miss_mask.any():
+            Xp = out.loc[miss_mask, num_features + cat_features].copy()
+            y_pred = np.expm1(mono_pipe.predict(Xp))
+            # Clip to [0, +inf)
+            y_pred = np.clip(y_pred, 0.0, None)
+            # Upper bound within WBC if available (physiologic constraint)
+            do_clip_to_wbc = True if clip_to_wbc is None else bool(clip_to_wbc)
+            if do_clip_to_wbc and "WBC" in out.columns:
+                ub = out.loc[miss_mask, "WBC"].astype(float).values
+                y_pred = np.minimum(y_pred, np.where(np.isfinite(ub), ub, y_pred))
+            # Mild winsorization to limit extremes
+            pct = 99.5 if winsorize_pct is None else float(winsorize_pct)
+            y_pred = np.clip(y_pred, 0.0, np.nanpercentile(y_pred, pct))
+            out.loc[miss_mask, "MONOCYTES"] = y_pred
+        if keep_indicator:
+            out["MONOCYTES_missing"] = df["MONOCYTES"].isna().astype(int)
+        else:
+            if "MONOCYTES_missing" in out.columns:
+                out.drop(columns=["MONOCYTES_missing"], inplace=True, errors="ignore")
+        return out
+
+    before_tr = train_df["MONOCYTES"].isna().mean()
+    before_te = test_df["MONOCYTES"].isna().mean()
+    train_df_imputed = _impute(train_df)
+    test_df_imputed = _impute(test_df)
+    after_tr = train_df_imputed["MONOCYTES"].isna().mean()
+    after_te = test_df_imputed["MONOCYTES"].isna().mean()
+    print(f"[MONO] Taux de NA MONOCYTES train: {before_tr:.1%} -> {after_tr:.1%}")
+    print(f"[MONO] Taux de NA MONOCYTES test : {before_te:.1%} -> {after_te:.1%}")
+
+    # Save meta sidecar
+    try:
+        meta.update(
+            {
+                "na_rates": {
+                    "train_before": float(before_tr),
+                    "train_after": float(after_tr),
+                    "test_before": float(before_te),
+                    "test_after": float(after_te),
+                }
+            }
+        )
+        meta_path = os.path.splitext(model_path)[0] + "_meta.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        print(f"[MONO] Impossible d'enregistrer les métadonnées de l'imputeur: {e}")
+
+    return train_df_imputed, test_df_imputed

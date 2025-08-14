@@ -30,6 +30,7 @@ def analyze_feature_correlations(data_path: str, threshold: float = 0.6):
 
     # --- 2. CALCUL DE LA MATRICE DE CORRÉLATION ---
     print("\n[STEP 2/3] Calcul de la matrice de corrélation...")
+    df = df.drop(columns=["CENTER_GROUP"])
     corr_matrix = df.corr()
     print("   -> Matrice de corrélation calculée.")
 
@@ -59,9 +60,32 @@ def analyze_feature_correlations(data_path: str, threshold: float = 0.6):
 
         with pd.option_context("display.max_rows", None):
             print(strong_pairs_sorted)
+
+        # Sauvegarder les paires fortement corrélées dans un CSV
+        os.makedirs("reports", exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(data_path))[0]
+        csv_path = os.path.join(
+            "reports",
+            f"highly_correlated_pairs_{base_name}_thr{str(threshold).replace('.', '_')}.csv",
+        )
+        strong_pairs_sorted.to_csv(csv_path, index=False)
+        print(f"   ✓ Paires fortement corrélées sauvegardées dans : {csv_path}")
     else:
         print(
             "   -> Aucune paire de features fortement corrélée trouvée (c'est une bonne nouvelle !)."
+        )
+        # Créer un fichier CSV vide (avec en-têtes) pour garder une trace
+        os.makedirs("reports", exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(data_path))[0]
+        csv_path = os.path.join(
+            "reports",
+            f"highly_correlated_pairs_{base_name}_thr{str(threshold).replace('.', '_')}.csv",
+        )
+        pd.DataFrame(columns=["Feature 1", "Feature 2", "Correlation"]).to_csv(
+            csv_path, index=False
+        )
+        print(
+            f"   ✓ Fichier CSV vide créé (aucune paire au-dessus du seuil) : {csv_path}"
         )
 
     # --- (Optionnel) Générer une heatmap des 30 features les plus importantes ---
@@ -98,6 +122,7 @@ def analyze_feature_correlations(data_path: str, threshold: float = 0.6):
 
 if __name__ == "__main__":
     # Spécifiez ici le chemin vers le fichier que vous voulez analyser
-    STABLE_TRAIN_DATA_PATH = "datasets_stable/X_train_stable.csv"
-
-    analyze_feature_correlations(data_path=STABLE_TRAIN_DATA_PATH)
+    TRAIN_DATA_PATH = "datasets_processed/X_test_processed.csv"
+    analyze_feature_correlations(data_path=TRAIN_DATA_PATH)
+    TEST_DATA_PATH = "datasets_processed/X_test_processed.csv"
+    analyze_feature_correlations(data_path=TEST_DATA_PATH)

@@ -19,6 +19,34 @@ CLINICAL_RANGES = {
     "PLT": (0, 3000),
     "HB": (2, 25),
 }
+
+# Clinical feature engineering configuration (traceable)
+CLINICAL_NUMERIC_COLUMNS = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
+CLINICAL_RATIOS = {
+    # ratio_name: (numerator, denominator)
+    "neutrophil_ratio": ("ANC", "WBC"),
+    "monocyte_ratio": ("MONOCYTES", "WBC"),
+    "platelet_wbc_ratio": ("PLT", "WBC"),
+    "blast_platelet_ratio": ("BM_BLAST", "PLT"),
+}
+CLINICAL_THRESHOLDS = {
+    # feature_name: (column, operator, threshold)
+    "anemia_moderate": ("HB", "<", 10),
+    "anemia_severe": ("HB", "<", 8),
+    "thrombocytopenia_moderate": ("PLT", "<", 100),
+    "thrombocytopenia_severe": ("PLT", "<", 50),
+    "neutropenia_moderate": ("ANC", "<", 1.5),
+    "neutropenia_severe": ("ANC", "<", 1.0),
+    "leukocytosis_high": ("WBC", ">", 30),
+    "high_blast_count": ("BM_BLAST", ">", 20),
+}
+CLINICAL_LOG_COLUMNS = ["WBC", "PLT", "ANC", "MONOCYTES"]
+MISSINGNESS_POLICY = {
+    "create_indicators": True,
+    # Keep only these indicators by default to limit drift while preserving clinically relevant signals
+    "keep_columns": ["WBC", "HB", "PLT", "ANC", "MONOCYTES"],
+    "drop_non_kept_indicators": True,
+}
 # ELN 2022 Cytogenetic Risk Classification
 # Based on ELN 2022 recommendations for cytogenetic risk stratification
 
@@ -46,6 +74,15 @@ CYTOGENETIC_INTERMEDIATE = [
     r"11q23",  # Other KMT2A rearrangements
     # All other cytogenetic abnormalities not classified as favorable or adverse
 ]
+
+# Complexity definition and ELN encoding controls
+COMPLEX_KARYOTYPE_MIN_ABNORMALITIES = 3
+ELN_CYTO_RISK_ENCODING = {
+    # encode_as: "ordinal" -> a single numeric with weights; "one_hot" -> 3 binary cols
+    "encode_as": "one_hot",
+    # Weights used only when encode_as == "ordinal"
+    "weights": {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0},
+}
 
 # ELN 2022 Risk Classification Genes
 # Based on ELN 2022 recommendations for AML genetic risk stratification
@@ -105,6 +142,26 @@ FIRST_TIER_DISCOVERED_GENES = [
 # Gènes découverts au deuxième tour (pertinence clinique avérée)
 SECOND_TIER_DISCOVERED_GENES = ["GATA2", "KMT2C", "BCORL1", "MPL", "SH2B3", "CSNK1A1"]
 
+# Additional frequently mutated genes discovered in dataset but absent from the default config
+# Sourced from exploratory analysis (top counts):
+DISCOVERED_TOP_MISSING_GENES = [
+    "ETNK1",
+    "BRCC3",
+    "CTCF",
+    "EP300",
+    "ZBTB33",
+    "GNB1",
+    "ASXL2",
+    "ARID2",
+    "PRPF8",
+    "GNAS",
+    "U2AF2",
+    "KMT2D",
+    "CREBBP",
+    "NFE2",
+    "CSF3R",
+]
+
 # --- LISTE FINALE ET COMPLÈTE ---
 ALL_IMPORTANT_GENES = list(
     set(
@@ -114,6 +171,7 @@ ALL_IMPORTANT_GENES = list(
         + RAS_PATHWAY_GENES
         + FIRST_TIER_DISCOVERED_GENES
         + SECOND_TIER_DISCOVERED_GENES
+        + DISCOVERED_TOP_MISSING_GENES
     )
 )
 
@@ -130,21 +188,122 @@ GENE_PATHWAYS = {
     "Cohesin_complex": ["STAG2"],
 }
 
+# Molecular feature toggles and thresholds
+MOLECULAR_FEATURE_TOGGLES = {
+    "pathway_features": {"binary": True, "count": False},
+    "burden": True,
+}
+TP53_HIGH_VAF_THRESHOLD = 0.55
+MOLECULAR_VAF_THRESHOLDS = {
+    # Per-gene high VAF thresholds (used if present). TP53 falls back to TP53_HIGH_VAF_THRESHOLD.
+    "FLT3": 0.25,
+    "NPM1": 0.5,
+    "CEBPA": 0.5,
+    "DNMT3A": 0.5,
+    "IDH1": 0.5,
+    "IDH2": 0.5,
+}
+ELN_MOLECULAR_RISK_ENCODING = {
+    "encode_as": "one_hot",
+    "weights": {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0},
+}
+
+# Redundancy policy to prune overlapping or collinear features
+REDUNDANCY_POLICY = {
+    # Drop *_count when *_altered exists (e.g., Tumor_suppressor_count vs Tumor_suppressor_altered)
+    "drop_count_when_binary_exists": True,
+    # Drop numeric sex encoding if one-hot is present
+    "drop_sex_numeric_if_ohe": True,
+    # Prune most *_missing except those explicitly kept in MISSINGNESS_POLICY.keep_columns
+    "prune_missingness_indicators": True,
+    # Explicit drop list (can be adjusted per-run)
+    "explicit_drop": [
+        # Examples of redundant pairs observed as 1.0 correlated in reports
+        # "Tumor_suppressor_count",  # keep binary altered by default
+        # "Cohesin_complex_count",
+        # "any_cosmic_is_fusion_gene",
+        # "any_cosmic_has_translocation_common",
+    ],
+}
+
+# Cap for total number of cyto abnormalities when computing derived features
+COMPLEX_ABNORMALITIES_CAP = 12
+
+# Centralized preprocessing controls
+PREPROCESSING = {
+    # Imputation strategy used inside the global preprocessing pipeline
+    # accepted values by get_preprocessing_pipeline: "knn", "iterative", "simple"
+    "imputer": "iterative",
+    # Detailed KNN parameters
+    "knn": {"n_neighbors": 4},
+    # Iterative imputer parameters (for documentation/traceability)
+    "iterative": {
+        "max_iter": 70,
+        "estimator": "RandomForest",
+        "estimator_n_estimators": 40,
+        "random_state": SEED,
+    },
+    # Supervised MONOCYTES imputer parameters (train-only model)
+    # Used by data preparation when EXPERIMENT.use_monocyte_supervised is True
+    "monocyte_imputer": {
+        "model_path": os.path.join(MODEL_DIR, "monocyte_imputer.joblib"),
+        # Predictors taken from clinical features
+        "predictors": {
+            "num": ["WBC", "ANC", "HB", "PLT", "BM_BLAST"],
+            "cat": ["CENTER"],
+        },
+        # Preprocessing for numeric predictors
+        "preprocessing": {
+            "num_imputer": "median",  # median or mean
+            "num_scaler": "standard",  # standard or robust
+        },
+        # HistGradientBoostingRegressor hyperparameters
+        "regressor": {
+            "type": "HistGradientBoostingRegressor",
+            "learning_rate": 0.08,
+            "max_depth": None,
+            "max_iter": 400,
+            "l2_regularization": 0.0,
+            "random_state": SEED,
+        },
+        # Post-processing controls
+        "clip_to_wbc": True,  # enforce MONOCYTES <= WBC when WBC available
+        "winsorize_pct": 99.5,  # upper percentile cap for predictions
+    },
+    # Quantile clipping applied to continuous features
+    "clip_quantiles": {"lower": 0.01, "upper": 0.99},
+    # Numeric scaler policy inside the pipeline: "standard" or "robust"
+    "numeric_scaler": "robust",
+}
+
+# Experiment metadata and toggles
+EXPERIMENT = {
+    "name": "baseline_knn_supervised_mono",
+    # Use supervised MONOCYTES imputation trained on train-only
+    "use_monocyte_supervised": True,
+    # If True, keeps MONOCYTES_missing indicator; else drop to reduce drift
+    "keep_monocyte_indicator": False,
+    # Centers differ at inference -> do not include CENTER OHE as features
+    "use_center_ohe": False,
+    # Downstream model family (for traceability only)
+    "model_family": "rsf",
+    # Random seed propagated to components
+    "random_seed": SEED,
+}
+
 # Model parameters
 TAU = 7  # For C-index calculation
 
 RSF_PARAMS = {
-    "n_estimators": 400,  # Assez d'arbres pour stabiliser les prédictions.
-    "max_depth": 15,  # IMPORTANT: On limite la profondeur pour éviter l'overfitting.
-    "min_samples_split": 20,  # Régularisation : ne pas splitter de petits nœuds.
-    "min_samples_leaf": 10,  # Régularisation forte : chaque feuille doit être bien peuplée.
-    "max_features": "sqrt",  # Standard pour la robustesse, force les arbres à être différents.
-    "n_jobs": -1,  # Utilise tous les cœurs du CPU.
+    "n_estimators": 400,
+    "max_depth": 15,
+    "min_samples_split": 20,
+    "min_samples_leaf": 10,
+    "max_features": "sqrt",
+    "n_jobs": -1,
 }
 
-# --- Gradient Boosting Survival Analysis (LE PLUS PROMETTEUR) ---
-# Souvent le plus performant. Les paramètres sont cruciaux.
-# Arbres très peu profonds, apprentissage lent, forte régularisation.
+
 GRADIENT_BOOSTING_PARAMS = {
     "n_estimators": 500,  # Plus d'arbres car le learning_rate est faible.
     "learning_rate": 0.05,  # Un taux d'apprentissage plus faible est plus robuste.

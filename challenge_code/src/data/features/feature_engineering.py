@@ -1,25 +1,38 @@
 """
 Feature Engineering module for AML survival analysis.
 
-This module consolidates all clinically relevant features for predicting
-overall survival in AML patients based on ELN 2022 guidelines.
-
-Key Features:
-- Modular structure with classes for clinical, cytogenetic, and molecular features.
-- Comprehensive feature extraction including interactions and encodings.
-- Integrated risk scores combining clinical, molecular, and cytogenetic data.
+All numeric thresholds, gene sets, toggles and encodings are configured in src.config
+for full experiment traceability.
 """
 
 import re
 import pandas as pd
 import numpy as np
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from ...config import (
+    # Clinical
+    CLINICAL_NUMERIC_COLUMNS,
+    CLINICAL_RATIOS,
+    CLINICAL_THRESHOLDS,
+    CLINICAL_LOG_COLUMNS,
+    MISSINGNESS_POLICY,
+    # Cytogenetics
     CYTOGENETIC_FAVORABLE,
     CYTOGENETIC_ADVERSE,
     CYTOGENETIC_INTERMEDIATE,
+    COMPLEX_KARYOTYPE_MIN_ABNORMALITIES,
+    ELN_CYTO_RISK_ENCODING,
+    # Molecular
     ALL_IMPORTANT_GENES,
     GENE_PATHWAYS,
+    MOLECULAR_FEATURE_TOGGLES,
+    ELN_MOLECULAR_RISK_ENCODING,
+    TP53_HIGH_VAF_THRESHOLD,
+    MOLECULAR_VAF_THRESHOLDS,
+    # Redundancy
+    REDUNDANCY_POLICY,
+    # Caps
+    COMPLEX_ABNORMALITIES_CAP,
 )
 
 from src.data.data_extraction.external_data_manager import ExternalDataManager
@@ -31,14 +44,14 @@ class ClinicalFeatureEngineering:
     @staticmethod
     def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
         clinical_df = df.copy()
-        numeric_columns = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
         clinical_df = ClinicalFeatureEngineering._ensure_numeric_columns(
-            clinical_df, numeric_columns
+            clinical_df, CLINICAL_NUMERIC_COLUMNS
         )
-        # Add explicit missingness indicators (useful for imputation and survival bias)
-        for col in numeric_columns:
-            if col in clinical_df.columns:
-                clinical_df[f"{col}_missing"] = clinical_df[col].isna().astype(int)
+        # Missingness indicators (config-driven)
+        if MISSINGNESS_POLICY.get("create_indicators", True):
+            for col in CLINICAL_NUMERIC_COLUMNS:
+                if col in clinical_df.columns:
+                    clinical_df[f"{col}_missing"] = clinical_df[col].isna().astype(int)
         clinical_df = ClinicalFeatureEngineering._create_clinical_ratios(clinical_df)
         clinical_df = ClinicalFeatureEngineering._create_clinical_thresholds(
             clinical_df
@@ -48,6 +61,7 @@ class ClinicalFeatureEngineering:
             clinical_df
         )
         clinical_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+        clinical_df = _apply_redundancy_policy(clinical_df)
         return clinical_df
 
     @staticmethod
@@ -59,41 +73,31 @@ class ClinicalFeatureEngineering:
 
     @staticmethod
     def _create_clinical_ratios(df: pd.DataFrame) -> pd.DataFrame:
-        ratios = {
-            "neutrophil_ratio": ("ANC", "WBC"),  # Granulocytic maturation
-            "monocyte_ratio": ("MONOCYTES", "WBC"),  # Unfavorable if elevated
-            "platelet_wbc_ratio": ("PLT", "WBC"),  # General hematopoiesis
-            "blast_platelet_ratio": ("BM_BLAST", "PLT"),  # Additional ratio
-        }
-        for ratio_name, (numerator, denominator) in ratios.items():
+        """Create clinical ratios based on config mapping."""
+        ratios: Dict[str, Tuple[str, str]] = CLINICAL_RATIOS
+        for ratio_name, pair in ratios.items():
+            numerator, denominator = pair
             if numerator in df.columns and denominator in df.columns:
-                df[ratio_name] = df[numerator] / df[denominator]
+                # Guard against divide-by-zero and keep NaN for zero/absent denominator
+                denom = df[denominator].replace({0: np.nan})
+                df[ratio_name] = df[numerator] / denom
                 df[ratio_name] = df[ratio_name].replace([np.inf, -np.inf], np.nan)
         return df
 
     @staticmethod
     def _create_clinical_thresholds(df: pd.DataFrame) -> pd.DataFrame:
-        thresholds = {
-            # Anemia thresholds
-            "anemia_moderate": ("HB", "<", 10),
-            "anemia_severe": ("HB", "<", 8),
-            # Thrombocytopenia thresholds
-            "thrombocytopenia_moderate": ("PLT", "<", 100),
-            "thrombocytopenia_severe": ("PLT", "<", 50),
-            # Neutropenia thresholds
-            "neutropenia_moderate": ("ANC", "<", 1.5),
-            "neutropenia_severe": ("ANC", "<", 1.0),
-            # Other thresholds
-            "leukocytosis_high": ("WBC", ">", 30),
-            "high_blast_count": ("BM_BLAST", ">", 20),
-        }
-        for feature_name, (column, operator, threshold) in thresholds.items():
+        for feature_name, (column, operator, threshold) in CLINICAL_THRESHOLDS.items():
             if column in df.columns:
-                df[feature_name] = (
-                    (df[column] < threshold).astype(int)
-                    if operator == "<"
-                    else (df[column] > threshold).astype(int)
-                )
+                if operator == "<":
+                    df[feature_name] = (df[column] < threshold).astype(int)
+                elif operator == "<=":
+                    df[feature_name] = (df[column] <= threshold).astype(int)
+                elif operator == ">":
+                    df[feature_name] = (df[column] > threshold).astype(int)
+                elif operator == ">=":
+                    df[feature_name] = (df[column] >= threshold).astype(int)
+                else:
+                    df[feature_name] = (df[column] == threshold).astype(int)
 
         return df
 
@@ -118,14 +122,15 @@ class ClinicalFeatureEngineering:
 
     @staticmethod
     def _create_log_transformations(df: pd.DataFrame) -> pd.DataFrame:
-        log_columns = ["WBC", "PLT", "ANC", "MONOCYTES"]
-        for col in log_columns:
+        for col in CLINICAL_LOG_COLUMNS:
             if col in df.columns:
-                df[f"log_{col}"] = np.log1p(df[col])
+                vals = pd.to_numeric(df[col], errors="coerce")
+                vals = vals.where(vals >= 0, np.nan)
+                df[f"log_{col}"] = np.log1p(vals)
         return df
 
     @staticmethod
-    def _create_center_one_hot_encoding(final_df: pd.DataFrame) -> pd.DataFrame:
+    def create_center_one_hot_encoding(final_df: pd.DataFrame) -> pd.DataFrame:
         """
         Create one-hot encoding for CENTER variable.
 
@@ -152,6 +157,9 @@ class ClinicalFeatureEngineering:
         final_df = final_df.drop(columns=["CENTER"])
 
         return final_df
+
+    # Backward-compatible alias
+    _create_center_one_hot_encoding = create_center_one_hot_encoding
 
 
 class CytogeneticFeatureExtraction:
@@ -214,17 +222,22 @@ class CytogeneticFeatureExtraction:
         # Chromosome count with validation
         chromosome_count = cytogenetics.str.extract(r"(\d+)")[0]
         chromosome_count = pd.to_numeric(chromosome_count, errors="coerce")
+        # Keep NaN for unknown/out-of-range instead of coercing to 46 to avoid false diploid assumptions
         chromosome_count = chromosome_count.where(
-            (chromosome_count >= 30) & (chromosome_count <= 80), 46
+            (chromosome_count >= 30) & (chromosome_count <= 80), np.nan
         )
-        result_df["chromosome_count"] = chromosome_count.fillna(46).astype(int)
+        result_df["chromosome_count"] = chromosome_count
 
         # Sex chromosome determination
-        result_df["sex_chromosomes"] = 0.5  # Default for unknown
+        result_df["sex_chromosomes"] = 0.5  # Backward-compatible numeric encoding
         xx_mask = cytogenetics.str.contains(r"\bXX\b", case=False, na=False)
         xy_mask = cytogenetics.str.contains(r"\bXY\b", case=False, na=False)
         result_df.loc[xx_mask, "sex_chromosomes"] = 0
         result_df.loc[xy_mask, "sex_chromosomes"] = 1
+        # Add one-hot encoding for robustness (keeps numeric column for compatibility)
+        result_df["SEX_XX"] = xx_mask.astype(int)
+        result_df["SEX_XY"] = xy_mask.astype(int)
+        result_df["SEX_UNKNOWN"] = (~xx_mask & ~xy_mask).astype(int)
 
         return result_df
 
@@ -255,9 +268,9 @@ class CytogeneticFeatureExtraction:
         ].max(axis=1)
 
         # === INTERMEDIATE ABNORMALITIES ===
-        # Normal karyotype: allow trailing clone counts or additional notations, but exclude any abnormal markers
+        # Normal karyotype: robust detection of 46,XX/46,XY allowing optional comma/space and clone counts in brackets
         has_normal_code = cytogenetics.str.contains(
-            r"\b46,XX\b|\b46,XY\b", case=False, na=False
+            r"\b46[, ]?(?:XX|XY)\b", case=False, na=False
         )
         has_abnormal_markers = cytogenetics.str.contains(
             r"del\(|inv\(|t\(|add\(|der\(|ins\(|i\(|\+|-", case=False, na=False
@@ -266,6 +279,20 @@ class CytogeneticFeatureExtraction:
             has_normal_code & ~has_abnormal_markers
         ).astype(int)
         result_df["trisomy_8"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[1])
+        # Additional intermediate markers (optional features)
+        if len(CYTOGENETIC_INTERMEDIATE) > 2:
+            result_df["t_9_11"] = contains_pattern(CYTOGENETIC_INTERMEDIATE[2])
+        if len(CYTOGENETIC_INTERMEDIATE) > 3:
+            result_df["kmt2a_rearrangement"] = contains_pattern(
+                CYTOGENETIC_INTERMEDIATE[3]
+            )
+        # Useful extra binary markers often reported
+        result_df["minus_Y"] = cytogenetics.str.contains(
+            r"-Y\b", case=False, na=False
+        ).astype(int)
+        result_df["plus_21"] = cytogenetics.str.contains(
+            r"\+21\b", case=False, na=False
+        ).astype(int)
 
         # === ADVERSE ABNORMALITIES ===
         adverse_features = {
@@ -289,60 +316,166 @@ class CytogeneticFeatureExtraction:
     ) -> pd.DataFrame:
         """Extract cytogenetic complexity metrics."""
 
-        # Count total abnormalities
-        def count_abnormalities(cyto_string):
-            if not isinstance(cyto_string, str) or cyto_string.strip() == "":
-                return 0
-            # Skip the baseline chromosome count (e.g., 46,XX/XY) and clone counts
-            parts = cyto_string.split(",")
-            if len(parts) <= 2:
-                return 0
-            abnormalities_str = ",".join(parts[2:])
-            # Count structural events: t(), del(), inv(), add(), der(), ins(), i()
-            structural = re.findall(
-                r"t\(|del\(|inv\(|add\(|der\(|ins\(|i\(",
-                abnormalities_str,
-                flags=re.IGNORECASE,
-            )
-            # Count numerical gains/losses like +8, -7, +mar
-            numerical = re.findall(
-                r"[\+\-](?:\d+|X|Y|mar)", abnormalities_str, flags=re.IGNORECASE
-            )
-            return len(structural) + len(numerical)
+        # Helper to clean bracketed clone counts like [5]
+        def _remove_brackets(s: str) -> str:
+            return re.sub(r"\[[^\]]*\]", "", s)
 
-        # Appliquer cette fonction à la colonne
-        result_df["num_cyto_abnormalities"] = cytogenetics.apply(count_abnormalities)
+        def _count_events_in_clone(clone_text: str) -> dict:
+            text = _remove_brackets(clone_text)
+            # Remove baseline leading tokens like '46', 'XX/XY' from the start of the clone
+            tokens = [t.strip() for t in text.split(",") if t.strip()]
+            # Drop the first two tokens when they look like baseline count and sex
+            start_idx = 0
+            if len(tokens) >= 1 and re.fullmatch(r"\d{2,}", tokens[0]):
+                start_idx = 1
+            if len(tokens) >= 2 and re.fullmatch(
+                r"X{2}|XY", tokens[1], flags=re.IGNORECASE
+            ):
+                start_idx = 2
+            events_str = ",".join(tokens[start_idx:])
+            counts = {
+                "n_t": len(re.findall(r"t\(", events_str, flags=re.IGNORECASE)),
+                "n_del": len(re.findall(r"del\(", events_str, flags=re.IGNORECASE)),
+                "n_inv": len(re.findall(r"inv\(", events_str, flags=re.IGNORECASE)),
+                "n_add": len(re.findall(r"add\(", events_str, flags=re.IGNORECASE)),
+                "n_der": len(re.findall(r"der\(", events_str, flags=re.IGNORECASE)),
+                "n_ins": len(re.findall(r"ins\(", events_str, flags=re.IGNORECASE)),
+                "n_i": len(re.findall(r"\bi\(", events_str, flags=re.IGNORECASE)),
+                "n_plus": len(
+                    re.findall(r"\+(?:\d+|X|Y|mar)\b", events_str, flags=re.IGNORECASE)
+                ),
+                "n_minus": len(
+                    re.findall(r"-(?:\d+|X|Y)\b", events_str, flags=re.IGNORECASE)
+                ),
+                "n_mar": len(re.findall(r"\+mar\b", events_str, flags=re.IGNORECASE)),
+                "has_idem": (
+                    1 if re.search(r"\bidem\b", events_str, flags=re.IGNORECASE) else 0
+                ),
+            }
+            return counts
+
+        def count_abnormalities_and_types(cyto_string: str) -> dict:
+            if not isinstance(cyto_string, str) or cyto_string.strip() == "":
+                # Return zeros for all counters
+                return {
+                    k: 0
+                    for k in [
+                        "n_t",
+                        "n_del",
+                        "n_inv",
+                        "n_add",
+                        "n_der",
+                        "n_ins",
+                        "n_i",
+                        "n_plus",
+                        "n_minus",
+                        "n_mar",
+                        "has_idem",
+                        "clone_count",
+                        "total",
+                    ]
+                }
+            # Split clones by '/'
+            clones = [c.strip() for c in cyto_string.split("/") if c.strip()]
+            agg = {
+                "n_t": 0,
+                "n_del": 0,
+                "n_inv": 0,
+                "n_add": 0,
+                "n_der": 0,
+                "n_ins": 0,
+                "n_i": 0,
+                "n_plus": 0,
+                "n_minus": 0,
+                "n_mar": 0,
+                "has_idem": 0,
+            }
+            for clone in clones:
+                c = _count_events_in_clone(clone)
+                for k in agg:
+                    agg[k] += c[k]
+            # Derive totals
+            structural = (
+                agg["n_t"]
+                + agg["n_del"]
+                + agg["n_inv"]
+                + agg["n_add"]
+                + agg["n_der"]
+                + agg["n_ins"]
+                + agg["n_i"]
+            )
+            numerical = agg["n_plus"] + agg["n_minus"]
+            total = structural + numerical
+            # Cap to avoid extreme outliers dominating (config-driven)
+            total = min(total, COMPLEX_ABNORMALITIES_CAP)
+            agg.update(
+                {
+                    "clone_count": len(clones),
+                    "total": total,
+                    "structural_count": structural,
+                    "numerical_count": numerical,
+                }
+            )
+            return agg
+
+        # Apply and expand into columns
+        counts_df = cytogenetics.apply(count_abnormalities_and_types).apply(pd.Series)
+        # Rename for clarity
+        counts_df.rename(
+            columns={
+                "total": "num_cyto_abnormalities",
+            },
+            inplace=True,
+        )
+        # Merge into result
+        for col in counts_df.columns:
+            result_df[col] = counts_df[col].fillna(0).astype(int)
+
         result_df["complex_karyotype"] = (
-            result_df["num_cyto_abnormalities"] >= 3
+            result_df["num_cyto_abnormalities"] >= COMPLEX_KARYOTYPE_MIN_ABNORMALITIES
         ).astype(int)
+        # Provide a stabilized, monotonic transform without hard capping information
+        result_df["log_num_cyto_abnormalities"] = np.log1p(
+            result_df["num_cyto_abnormalities"].astype(float)
+        )
         result_df["has_derivative_chromosome"] = cytogenetics.str.contains(
-            "der", na=False
+            r"\bder\(", case=False, na=False
         ).astype(int)
         result_df["has_marker_chromosome"] = cytogenetics.str.contains(
-            r"\+mar", na=False
+            r"\+mar\b", case=False, na=False
         ).astype(int)
 
         return result_df
 
     @staticmethod
     def _calculate_eln2022_cytogenetic_risk(result_df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate final ELN 2022 cytogenetic risk score."""
-        # Initialize with intermediate risk (1)
-        result_df["eln_cyto_risk"] = 1
+        """Calculate final ELN 2022 cytogenetic risk with configurable encoding."""
+        favorable = result_df.get("any_favorable_cyto", 0).fillna(0).astype(int)
+        adverse = result_df.get("any_adverse_cyto", 0).fillna(0).astype(
+            int
+        ) | result_df.get("complex_karyotype", 0).fillna(0).astype(int)
+        label = pd.Series(1, index=result_df.index)  # default intermediate
+        label = label.mask(favorable == 1, 0)
+        label = label.mask(adverse == 1, 2)
 
-        # Favorable risk (0)
-        favorable_mask = result_df["any_favorable_cyto"] == 1
-        result_df.loc[favorable_mask, "eln_cyto_risk"] = 0
-
-        # Adverse risk (2)
-        adverse_mask = (
-            (result_df["any_adverse_cyto"] == 1)
-            | (result_df["complex_karyotype"] == 1)
-            | (result_df["has_derivative_chromosome"] == 1)
-            | (result_df["has_marker_chromosome"] == 1)
-        )
-        result_df.loc[adverse_mask, "eln_cyto_risk"] = 2
-
+        encoding = ELN_CYTO_RISK_ENCODING or {
+            "encode_as": "ordinal",
+            "weights": {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0},
+        }
+        if encoding.get("encode_as", "ordinal") == "one_hot":
+            result_df["eln_cyto_favorable"] = (label == 0).astype(int)
+            result_df["eln_cyto_intermediate"] = (label == 1).astype(int)
+            result_df["eln_cyto_adverse"] = (label == 2).astype(int)
+        else:
+            w = encoding.get(
+                "weights", {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0}
+            )
+            mapping = {
+                0: w.get("favorable", 0.0),
+                1: w.get("intermediate", 0.7),
+                2: w.get("adverse", 1.0),
+            }
+            result_df["eln_cyto_risk"] = label.map(mapping).astype(float)
         return result_df
 
 
@@ -355,11 +488,13 @@ class MolecularFeatureExtraction:
         maf_df: pd.DataFrame,
         important_genes: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        if important_genes is None:
-            important_genes = ALL_IMPORTANT_GENES
+        important_genes = important_genes or ALL_IMPORTANT_GENES
+
+        if df is None or df.empty:
+            return pd.DataFrame()
 
         # Initialize molecular features dataframe
-        molecular_df = pd.DataFrame(index=df["ID"].unique())
+        molecular_df = pd.DataFrame({"ID": df["ID"].astype(str).unique()})
 
         # === BINARY MUTATION STATUS ===
         molecular_df = MolecularFeatureExtraction._extract_binary_mutations(
@@ -376,13 +511,13 @@ class MolecularFeatureExtraction:
             molecular_df, maf_df
         )
 
-        # === CLINICALLY RELEVANT CO-MUTATIONS ===
-        molecular_df = MolecularFeatureExtraction._extract_comutation_patterns(
+        # === PATHWAY-LEVEL ALTERATIONS ===
+        molecular_df = MolecularFeatureExtraction._extract_pathway_alterations(
             molecular_df
         )
 
-        # === PATHWAY-LEVEL ALTERATIONS ===
-        molecular_df = MolecularFeatureExtraction._extract_pathway_alterations(
+        # === CLINICALLY RELEVANT CO-MUTATIONS ===
+        molecular_df = MolecularFeatureExtraction._extract_comutation_patterns(
             molecular_df
         )
 
@@ -391,23 +526,53 @@ class MolecularFeatureExtraction:
             molecular_df
         )
 
-        return molecular_df.reset_index().rename(columns={"index": "ID"})
+        return molecular_df
 
     @staticmethod
     # Version corrigée et plus robuste
 
     def _extract_binary_mutations(molecular_df, maf_df, important_genes):
-        present_genes = set(maf_df["GENE"].unique())
+        if molecular_df is None or molecular_df.empty:
+            return molecular_df
 
-        for gene in important_genes:
-            column_name = f"mut_{gene}"
-            if gene in present_genes:
-                mutated_patients = maf_df[maf_df["GENE"] == gene]["ID"].unique()
-                molecular_df[column_name] = molecular_df.index.isin(
-                    mutated_patients
-                ).astype(int)
-            else:
-                molecular_df[column_name] = 0
+        # Normalize ID as string
+        molecular_df["ID"] = molecular_df["ID"].astype(str)
+        if maf_df is None or maf_df.empty:
+            for gene in important_genes:
+                molecular_df[f"mut_{gene}"] = 0
+            return molecular_df
+
+        # Flexible gene column detection
+        gene_col = None
+        for cand in ["GENE", "Hugo_Symbol", "Gene", "Gene_Symbol"]:
+            if cand in maf_df.columns:
+                gene_col = cand
+                break
+        if gene_col is None:
+            for gene in important_genes:
+                molecular_df[f"mut_{gene}"] = 0
+            return molecular_df
+
+        maf = maf_df.copy()
+        maf["ID"] = maf["ID"].astype(str)
+        piv = (
+            maf.loc[maf[gene_col].isin(important_genes), ["ID", gene_col]]
+            .dropna()
+            .assign(val=1)
+            .drop_duplicates()
+            .pivot_table(index="ID", columns=gene_col, values="val", fill_value=0)
+            .reset_index()
+        )
+        piv.columns = ["ID", *[f"mut_{c}" for c in piv.columns if c != "ID"]]
+        molecular_df = molecular_df.merge(piv, on="ID", how="left")
+        # Ensure all configured genes exist as columns
+        for g in important_genes:
+            col = f"mut_{g}"
+            if col not in molecular_df.columns:
+                molecular_df[col] = 0
+        # Fill and cast
+        gene_cols = [f"mut_{g}" for g in important_genes]
+        molecular_df[gene_cols] = molecular_df[gene_cols].fillna(0).astype(int)
         return molecular_df
 
     @staticmethod
@@ -415,28 +580,36 @@ class MolecularFeatureExtraction:
         molecular_df: pd.DataFrame, maf_df: pd.DataFrame
     ) -> pd.DataFrame:
         """Extract VAF-based features for prognostically important genes."""
-        vaf_important_genes = ["TP53", "FLT3", "NPM1", "CEBPA", "DNMT3A"]
+        if maf_df is None or maf_df.empty or molecular_df is None or molecular_df.empty:
+            return molecular_df
+        maf = maf_df.copy()
+        maf["ID"] = maf["ID"].astype(str)
+        vaf_col = None
+        for cand in ["VAF", "Variant_Allele_Frequency", "tumor_f"]:
+            if cand in maf.columns:
+                vaf_col = cand
+                break
+        if vaf_col is None:
+            return molecular_df
+        maf[vaf_col] = pd.to_numeric(maf[vaf_col], errors="coerce")
 
-        if "VAF" in maf_df.columns:
-            maf_df = maf_df.copy()
-            maf_df["VAF"] = pd.to_numeric(maf_df["VAF"], errors="coerce")
+        def max_vaf_for_gene(gene: str) -> pd.Series:
+            rows = maf[maf["GENE"] == gene]
+            return rows.groupby("ID")[vaf_col].max()
 
-        for gene in vaf_important_genes:
-            if gene in maf_df["GENE"].values:
-                gene_rows = maf_df[maf_df["GENE"] == gene]
-                gene_vaf = (
-                    gene_rows.groupby("ID")["VAF"].max()
-                    if "VAF" in gene_rows.columns
-                    else pd.Series(dtype=float)
+        # Key genes with specific high-VAF rules
+        vaf_thresholds = dict(MOLECULAR_VAF_THRESHOLDS)
+        vaf_thresholds["TP53"] = TP53_HIGH_VAF_THRESHOLD
+        for gene, thr in vaf_thresholds.items():
+            if gene in maf["GENE"].values:
+                max_vaf = max_vaf_for_gene(gene)
+                molecular_df[f"vaf_max_{gene}"] = (
+                    molecular_df["ID"].map(max_vaf).fillna(0.0)
                 )
-                molecular_df[f"vaf_max_{gene}"] = molecular_df.index.map(
-                    gene_vaf
-                ).fillna(0)
-
-                # Gene-specific high-VAF thresholds (FLT3 often uses lower allelic ratio thresholds)
                 if gene == "FLT3":
-                    # Detect ITD even if VAF missing
-                    has_itd_by_text = (
+                    # ITD text detection as positive regardless of VAF availability
+                    gene_rows = maf[maf["GENE"] == gene]
+                    has_itd = (
                         gene_rows[
                             [
                                 c
@@ -445,16 +618,20 @@ class MolecularFeatureExtraction:
                             ]
                         ]
                         .astype(str)
-                        .apply(lambda s: s.str.contains("ITD", case=False, na=False))
+                        .apply(
+                            lambda s: s.str.contains(
+                                "ITD|internal tandem duplication", case=False, na=False
+                            )
+                        )
                         .any(axis=1)
                     )
-                    itd_ids = set(gene_rows.loc[has_itd_by_text, "ID"].astype(str))
-                    high_vaf = (
-                        molecular_df[f"vaf_max_{gene}"] > 0.25
-                    ) | molecular_df.index.astype(str).isin(itd_ids)
+                    itd_ids = set(gene_rows.loc[has_itd, "ID"].astype(str))
+                    high = (molecular_df[f"vaf_max_{gene}"] >= thr) | molecular_df[
+                        "ID"
+                    ].isin(itd_ids)
                 else:
-                    high_vaf = molecular_df[f"vaf_max_{gene}"] > 0.5
-                molecular_df[f"{gene}_high_VAF"] = high_vaf.astype(int)
+                    high = molecular_df[f"vaf_max_{gene}"] >= thr
+                molecular_df[f"{gene}_high_VAF"] = high.astype(int)
             else:
                 molecular_df[f"vaf_max_{gene}"] = 0.0
                 molecular_df[f"{gene}_high_VAF"] = 0
@@ -468,16 +645,15 @@ class MolecularFeatureExtraction:
         # TP53 truncating mutations
         if "TP53" in maf_df["GENE"].values:
             tp53_patients = maf_df[maf_df["GENE"] == "TP53"]
-            truncating_effects = [
-                "nonsense",
-                "frameshift",
-                "splice_site",
-                "stop_gained",
-            ]
+            # Broaden patterns to catch common variant ontology names
+            truncating_pattern = (
+                r"nonsense|frameshift|frameshift_variant|splice_site|"
+                r"splice_acceptor|splice_donor|stop_gained|stop_lost|start_lost"
+            )
             tp53_truncating = tp53_patients[
-                tp53_patients["EFFECT"].str.contains(
-                    "|".join(truncating_effects), case=False, na=False
-                )
+                tp53_patients["EFFECT"]
+                .astype(str)
+                .str.contains(truncating_pattern, case=False, na=False)
             ]["ID"].unique()
             molecular_df["TP53_truncating"] = molecular_df.index.isin(
                 tp53_truncating
@@ -495,6 +671,42 @@ class MolecularFeatureExtraction:
         else:
             molecular_df["CEBPA_biallelic"] = 0
 
+        # FLT3 mutation subtypes: ITD and TKD (e.g., D835/I836)
+        if "FLT3" in maf_df["GENE"].values:
+            flt3_rows = maf_df[maf_df["GENE"] == "FLT3"].copy()
+            for col in ["EFFECT", "PROTEIN_CHANGE"]:
+                if col in flt3_rows.columns:
+                    flt3_rows[col] = flt3_rows[col].astype(str)
+            has_itd = (
+                flt3_rows[
+                    [c for c in ["EFFECT", "PROTEIN_CHANGE"] if c in flt3_rows.columns]
+                ]
+                .apply(
+                    lambda s: s.str.contains(
+                        r"ITD|internal tandem duplication", case=False, na=False
+                    )
+                )
+                .any(axis=1)
+            )
+            itd_ids = set(flt3_rows.loc[has_itd, "ID"].astype(str))
+            tkd_pat = (
+                flt3_rows["PROTEIN_CHANGE"].str.contains(
+                    r"D835|I836", case=False, na=False
+                )
+                if "PROTEIN_CHANGE" in flt3_rows.columns
+                else pd.Series(False, index=flt3_rows.index)
+            )
+            tkd_ids = set(flt3_rows.loc[tkd_pat, "ID"].astype(str))
+            molecular_df["FLT3_ITD"] = (
+                molecular_df.index.astype(str).isin(itd_ids).astype(int)
+            )
+            molecular_df["FLT3_TKD"] = (
+                molecular_df.index.astype(str).isin(tkd_ids).astype(int)
+            )
+        else:
+            molecular_df["FLT3_ITD"] = 0
+            molecular_df["FLT3_TKD"] = 0
+
         return molecular_df
 
     @staticmethod
@@ -506,18 +718,14 @@ class MolecularFeatureExtraction:
             & (molecular_df.get("mut_FLT3", 0) == 0)
         ).astype(int)
 
-        # Triple mutation: DNMT3A + NPM1 + FLT3
-        molecular_df["DNMT3A_NPM1_FLT3"] = (
-            (molecular_df.get("mut_DNMT3A", 0) == 1)
-            & (molecular_df.get("mut_NPM1", 0) == 1)
-            & (molecular_df.get("mut_FLT3", 0) == 1)
-        ).astype(int)
-
         return molecular_df
 
     @staticmethod
     def _extract_pathway_alterations(molecular_df: pd.DataFrame) -> pd.DataFrame:
         """Extract pathway-level alteration features."""
+        toggles = MOLECULAR_FEATURE_TOGGLES.get(
+            "pathway_features", {"binary": True, "count": False}
+        )
         for pathway_name, pathway_genes in GENE_PATHWAYS.items():
             pathway_columns = [
                 f"mut_{gene}"
@@ -526,38 +734,66 @@ class MolecularFeatureExtraction:
             ]
 
             if pathway_columns:
-                molecular_df[f"{pathway_name}_altered"] = (
-                    molecular_df[pathway_columns].sum(axis=1) > 0
-                ).astype(int)
-                molecular_df[f"{pathway_name}_count"] = molecular_df[
-                    pathway_columns
-                ].sum(axis=1)
-            else:
-                molecular_df[f"{pathway_name}_altered"] = 0
-                molecular_df[f"{pathway_name}_count"] = 0
+                if toggles.get("binary", True):
+                    molecular_df[f"{pathway_name}_altered"] = (
+                        molecular_df[pathway_columns].sum(axis=1) > 0
+                    ).astype(int)
+                if toggles.get("count", False):
+                    molecular_df[f"{pathway_name}_count"] = molecular_df[
+                        pathway_columns
+                    ].sum(axis=1)
 
         return molecular_df
 
     @staticmethod
     def _calculate_eln2022_molecular_risk(molecular_df: pd.DataFrame) -> pd.DataFrame:
         """Calculate ELN 2022 molecular risk classification."""
-        # Initialize with intermediate risk (1)
-        molecular_df["eln_molecular_risk"] = 1
-
-        # Favorable molecular features (0)
-        favorable_mask = MolecularFeatureExtraction.get_favorable_molecular_mask(
-            molecular_df
+        # Worst-rule with configurable encoding
+        favorable = (molecular_df.get("mut_NPM1", 0) == 1).astype(int)
+        adverse_cols = [
+            c
+            for c in [
+                "mut_TP53",
+                "mut_ASXL1",
+                "mut_RUNX1",
+                "mut_BCOR",
+                "mut_EZH2",
+                "mut_SF3B1",
+                "mut_SRSF2",
+                "mut_U2AF1",
+                "mut_ZRSR2",
+                "mut_STAG2",
+            ]
+            if c in molecular_df.columns
+        ]
+        adverse = (
+            (molecular_df[adverse_cols].sum(axis=1) > 0).astype(int)
+            if adverse_cols
+            else 0
         )
-        if favorable_mask is not None:
-            molecular_df.loc[favorable_mask, "eln_molecular_risk"] = 0
 
-        # Adverse molecular features (2)
-        adverse_mask = MolecularFeatureExtraction.get_adverse_molecular_mask(
-            molecular_df
-        )
-        if adverse_mask is not None:
-            molecular_df.loc[adverse_mask, "eln_molecular_risk"] = 2
+        label = pd.Series(1, index=molecular_df.index)
+        label = label.mask(favorable == 1, 0)
+        label = label.mask(adverse == 1, 2)
 
+        encoding = ELN_MOLECULAR_RISK_ENCODING or {
+            "encode_as": "ordinal",
+            "weights": {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0},
+        }
+        if encoding.get("encode_as", "ordinal") == "one_hot":
+            molecular_df["eln_mol_favorable"] = (label == 0).astype(int)
+            molecular_df["eln_mol_intermediate"] = (label == 1).astype(int)
+            molecular_df["eln_mol_adverse"] = (label == 2).astype(int)
+        else:
+            w = encoding.get(
+                "weights", {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0}
+            )
+            mapping = {
+                0: w.get("favorable", 0.0),
+                1: w.get("intermediate", 0.7),
+                2: w.get("adverse", 1.0),
+            }
+            molecular_df["eln_mol_risk"] = label.map(mapping).astype(float)
         return molecular_df
 
     @staticmethod
@@ -568,25 +804,42 @@ class MolecularFeatureExtraction:
         mutation_counts = (
             maf_df.groupby("ID").size().reset_index(name="total_mutations")
         )
-        vaf_stats = (
-            maf_df.groupby("ID")["VAF"]
-            .agg(
-                [
-                    ("vaf_mean", "mean"),
-                    ("vaf_median", "median"),
-                    ("vaf_max", "max"),
-                    ("vaf_std", "std"),
-                ]
+        if "VAF" in maf_df.columns:
+            maf_df = maf_df.copy()
+            maf_df["VAF"] = pd.to_numeric(maf_df["VAF"], errors="coerce")
+            vaf_stats = (
+                maf_df.groupby("ID")["VAF"]
+                .agg(
+                    [
+                        ("vaf_mean", "mean"),
+                        ("vaf_median", "median"),
+                        ("vaf_max", "max"),
+                        ("vaf_std", "std"),
+                    ]
+                )
+                .reset_index()
             )
-            .reset_index()
-        )
-        vaf_stats["vaf_std"] = vaf_stats["vaf_std"].fillna(0)
-        high_vaf_counts = (
-            maf_df[maf_df["VAF"] > 0.4]
-            .groupby("ID")
-            .size()
-            .reset_index(name="high_vaf_mutations")
-        )
+            vaf_stats["vaf_std"] = vaf_stats["vaf_std"].fillna(0)
+            high_vaf_counts = (
+                maf_df[maf_df["VAF"] > 0.4]
+                .groupby("ID")
+                .size()
+                .reset_index(name="high_vaf_mutations")
+            )
+        else:
+            # Provide zeros when VAF is unavailable
+            ids = mutation_counts["ID"]
+            vaf_stats = pd.DataFrame(
+                {
+                    "ID": ids,
+                    "vaf_mean": 0.0,
+                    "vaf_median": 0.0,
+                    "vaf_max": 0.0,
+                    "vaf_std": 0.0,
+                }
+            )
+            high_vaf_counts = pd.DataFrame({"ID": ids, "high_vaf_mutations": 0})
+
         burden_df = mutation_counts.merge(vaf_stats, on="ID", how="left")
         burden_df = burden_df.merge(high_vaf_counts, on="ID", how="left")
         burden_df["high_vaf_mutations"] = (
@@ -644,13 +897,7 @@ class MolecularFeatureExtraction:
         """
         Crée des features agrégées par patient basées sur la colonne 'IMPACT'.
         """
-        print(
-            "    -> Création des features basées sur l'impact des mutations (HIGH, MODERATE...)..."
-        )
         if "IMPACT" not in maf_df.columns:
-            print(
-                "       [AVERTISSEMENT] Colonne 'IMPACT' non trouvée. Features d'impact ignorées."
-            )
             return pd.DataFrame(index=base_df["ID"].unique())
 
         # S'assurer que la colonne est de type catégoriel pour un one-hot encoding propre
@@ -707,6 +954,50 @@ class MolecularFeatureExtraction:
                 oncogene_counts
             )
             external_features["num_tsg_muts"] = external_features.index.map(tsg_counts)
+            # Also expose binary presence flags to decouple burden from presence
+            external_features["any_oncogene_mut"] = (
+                external_features["num_oncogene_muts"].fillna(0) > 0
+            ).astype(int)
+            external_features["any_tsg_mut"] = (
+                external_features["num_tsg_muts"].fillna(0) > 0
+            ).astype(int)
+
+        # Agrégations génériques sur les colonnes COSMIC/MOLGEN si présentes
+        # - Pour chaque colonne binaire cosmic_* ou molgen_*, on ajoute un count par patient
+        #   et un flag binaire (any_*) indiquant la présence d'au moins un gène muté portant ce flag
+        # - Pour cosmic_tier_min (numérique), on prend le minimum parmi les gènes mutés du patient
+        cosmic_bool_cols = [
+            c
+            for c in maf_df.columns
+            if (c.startswith("cosmic_") or c.startswith("molgen_"))
+            and c != "cosmic_tier_min"
+        ]
+        # Sélectionner uniquement celles qui sont numériques (pour éviter les objets inattendus)
+        cosmic_bool_cols = [
+            c for c in cosmic_bool_cols if pd.api.types.is_numeric_dtype(maf_df[c])
+        ]
+
+        if cosmic_bool_cols:
+            # Remplir NaN par 0 pour l'agrégation
+            maf_cosmic = maf_df[["ID", *cosmic_bool_cols]].copy()
+            maf_cosmic[cosmic_bool_cols] = maf_cosmic[cosmic_bool_cols].fillna(0)
+            grp = maf_cosmic.groupby("ID")[cosmic_bool_cols]
+            counts = grp.sum()
+            any_flags = (counts > 0).astype(int)
+            # Renommer colonnes pour clarté
+            counts = counts.add_prefix("").add_suffix("_count")
+            any_flags = any_flags.add_prefix("any_")
+            # Fusionner dans external_features
+            external_features = external_features.join(counts, how="left")
+            external_features = external_features.join(any_flags, how="left")
+
+        # cosmic_tier_min: prendre le minimum par patient parmi les gènes mutés
+        if "cosmic_tier_min" in maf_df.columns:
+            # Ne garder que les lignes où une mutation est reportée (ID existe)
+            tier_series = maf_df.groupby("ID")["cosmic_tier_min"].min()
+            external_features["cosmic_min_tier_mut_genes"] = (
+                external_features.index.map(tier_series)
+            )
         external_features = (
             external_features.reset_index().rename(columns={"index": "ID"}).fillna(0)
         )
@@ -719,7 +1010,10 @@ class MolecularFeatureExtraction:
                     all_molecular_df, df_to_merge, on="ID", how="outer"
                 )
 
-        return all_molecular_df.fillna(0)
+        all_molecular_df = all_molecular_df.fillna(0)
+        # Redundancy pruning pass
+        all_molecular_df = _apply_redundancy_policy(all_molecular_df)
+        return all_molecular_df
 
 
 class IntegratedFeatureEngineering:
@@ -729,6 +1023,7 @@ class IntegratedFeatureEngineering:
         molecular_df: Optional[pd.DataFrame] = None,
         burden_df: Optional[pd.DataFrame] = None,
         cyto_df: Optional[pd.DataFrame] = None,
+        use_center_ohe: bool = False,
     ) -> pd.DataFrame:
 
         final_df = clinical_df.copy()
@@ -767,6 +1062,56 @@ class IntegratedFeatureEngineering:
         ]
         final_df[count_cols] = final_df[count_cols].fillna(0).astype(int)
 
+        # Optionally include CENTER one-hot if requested; otherwise drop CENTER for safety
+        if use_center_ohe and "CENTER" in final_df.columns:
+            final_df = ClinicalFeatureEngineering.create_center_one_hot_encoding(
+                final_df
+            )
         final_df = final_df.drop(columns=["CYTOGENETICS", "CENTER"], errors="ignore")
 
+        # Final redundancy pruning
+        final_df = _apply_redundancy_policy(final_df)
         return final_df
+
+
+# -----------------
+# Redundancy cleanup
+# -----------------
+def _apply_redundancy_policy(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    policy = REDUNDANCY_POLICY or {}
+    drop_cols: List[str] = []
+
+    # Drop numeric sex encoding when one-hot is present
+    if policy.get("drop_sex_numeric_if_ohe", True):
+        if {"SEX_XX", "SEX_XY"}.issubset(
+            df.columns
+        ) and "sex_chromosomes" in df.columns:
+            drop_cols.append("sex_chromosomes")
+
+    # Drop *_count when *_altered exists
+    if policy.get("drop_count_when_binary_exists", True):
+        for c in df.columns:
+            if c.endswith("_count"):
+                alt = c.replace("_count", "_altered")
+                if alt in df.columns:
+                    drop_cols.append(c)
+
+    # Prune missingness indicators except whitelisted
+    if policy.get("prune_missingness_indicators", True):
+        keep = set(MISSINGNESS_POLICY.get("keep_columns", []))
+        miss = [c for c in df.columns if c.endswith("_missing")]
+        for c in miss:
+            base = c[:-8]
+            if base not in keep:
+                drop_cols.append(c)
+
+    # Explicit drops
+    for c in policy.get("explicit_drop", []):
+        if c in df.columns:
+            drop_cols.append(c)
+
+    if drop_cols:
+        df = df.drop(columns=sorted(set(drop_cols)), errors="ignore")
+    return df

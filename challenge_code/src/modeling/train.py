@@ -289,7 +289,7 @@ def train_coxnet_model(X_train, y_train, l1_ratio=None, n_alphas=None, max_iter=
     coxnet = CoxnetSurvivalAnalysis(
         l1_ratio=l1_ratio,
         n_alphas=n_alphas,
-        normalize=COXNET_PARAMS["normalize"],
+        normalize=COXNET_PARAMS.get("normalize", True),
         max_iter=max_iter,
     )
     coxnet.fit(X_train, y_train)

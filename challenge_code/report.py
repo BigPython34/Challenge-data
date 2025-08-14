@@ -10,7 +10,16 @@ import pandas as pd
 # === Rapport pour X_train_processed.csv ===
 def feature_sanity_report(final_df, dataset_name=""):
     # Afficher le nombre de patients par centre à partir des colonnes one-hot CENTER_xxx
-    center_cols = [col for col in final_df.columns if col.startswith("CENTER_")]
+    # Only consider one-hot encoded center columns (numeric), exclude the string group label
+    import pandas.api.types as ptypes
+
+    center_cols = [
+        col
+        for col in final_df.columns
+        if col.startswith("CENTER_")
+        and col != "CENTER_GROUP"
+        and ptypes.is_numeric_dtype(final_df[col])
+    ]
     if center_cols:
         print(f"\n===== NOMBRE DE PATIENTS PAR CENTRE (one-hot) [{dataset_name}] =====")
         for col in sorted(center_cols):
@@ -20,33 +29,35 @@ def feature_sanity_report(final_df, dataset_name=""):
         print()
 
     feature_stats = []
+    import pandas.api.types as ptypes
+
     for col in final_df.columns:
-        if col in ["ID", "OS_YEARS", "OS_STATUS"]:
+        if col in ["ID", "OS_YEARS", "OS_STATUS", "CENTER_GROUP"]:
             continue
 
-        stats = {"feature": col, "dtype": final_df[col].dtype}
+        s = final_df[col]
+        stats = {"feature": col, "dtype": s.dtype}
 
-        # Pour les features binaires ou catégorielles à faible cardinalité
-        if final_df[col].nunique() < 10:
-            counts = final_df[col].value_counts(normalize=True, dropna=False)
-            stats["value_counts (%)"] = {
-                k: f"{v:.2%}" for k, v in counts.to_dict().items()
-            }
-            # Vérifier la variance nulle (si une seule valeur existe)
+        # Petites cardinalités → distribution
+        if s.nunique(dropna=False) < 10:
+            counts = s.value_counts(normalize=True, dropna=False)
+            stats["value_counts (%)"] = {k: f"{v:.2%}" for k, v in counts.items()}
             if len(counts) == 1:
                 stats["warning"] = "ZERO VARIANCE"
-
-        # Pour les features numériques
         else:
-            desc = final_df[col].describe()
-            stats["mean"] = f"{desc['mean']:.2f}"
-            stats["std"] = f"{desc['std']:.2f}"
-            stats["min"] = f"{desc['min']:.2f}"
-            stats["max"] = f"{desc['max']:.2f}"
+            if ptypes.is_numeric_dtype(s):
+                desc = s.describe()
+                # Sécuriser au cas où
+                stats["mean"] = f"{float(desc.get('mean', 0)):.2f}"
+                stats["std"] = f"{float(desc.get('std', 0)):.2f}"
+                stats["min"] = f"{float(desc.get('min', 0)):.2f}"
+                stats["max"] = f"{float(desc.get('max', 0)):.2f}"
+            else:
+                # Catégoriel haute cardinalité → top 5 catégories
+                top = s.astype(str).value_counts(dropna=False).head(5)
+                stats["top_values"] = top.to_dict()
 
-        # Compter les valeurs manquantes
-        stats["missing_percent"] = f"{final_df[col].isna().mean():.2%}"
-
+        stats["missing_percent"] = f"{s.isna().mean():.2%}"
         feature_stats.append(stats)
 
     report_df = pd.DataFrame(feature_stats)
