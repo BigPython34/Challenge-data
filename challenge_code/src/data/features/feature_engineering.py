@@ -6,6 +6,7 @@ for full experiment traceability.
 """
 
 import re
+import os
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
@@ -22,6 +23,9 @@ from ...config import (
     CYTOGENETIC_INTERMEDIATE,
     COMPLEX_KARYOTYPE_MIN_ABNORMALITIES,
     ELN_CYTO_RISK_ENCODING,
+    CYTO_FEATURE_TOGGLES,
+    CYTOGENETIC_COMMON_MONOSOMIES,
+    CYTOGENETIC_COMMON_TRISOMIES,
     # Molecular
     ALL_IMPORTANT_GENES,
     GENE_PATHWAYS,
@@ -29,6 +33,7 @@ from ...config import (
     ELN_MOLECULAR_RISK_ENCODING,
     TP53_HIGH_VAF_THRESHOLD,
     MOLECULAR_VAF_THRESHOLDS,
+    MOLECULAR_GENE_FREQ_FILTER,
     # Redundancy
     REDUNDANCY_POLICY,
     # Caps
@@ -295,18 +300,51 @@ class CytogeneticFeatureExtraction:
         ).astype(int)
 
         # === ADVERSE ABNORMALITIES ===
+        # Keep named columns for the first few canonical adverse patterns
         adverse_features = {
-            "del_5q": CYTOGENETIC_ADVERSE[0],
-            "monosomy_7": CYTOGENETIC_ADVERSE[1],
-            "del_17p": CYTOGENETIC_ADVERSE[2],
+            "del_5q_or_mono5": CYTOGENETIC_ADVERSE[0],
+            "monosomy_7_or_del7q": CYTOGENETIC_ADVERSE[1],
+            "del_17p_or_i17q": CYTOGENETIC_ADVERSE[2],
         }
 
         for feature_name, pattern in adverse_features.items():
             result_df[feature_name] = contains_pattern(pattern)
 
-        result_df["any_adverse_cyto"] = result_df[list(adverse_features.keys())].max(
-            axis=1
+        # Backward-compatible aliases (maintain old column names if downstream expects them)
+        result_df["del_5q"] = result_df["del_5q_or_mono5"]
+        result_df["monosomy_7"] = result_df["monosomy_7_or_del7q"]
+        result_df["del_17p"] = result_df["del_17p_or_i17q"]
+
+        # Additionally compute any adverse according to ALL configured adverse patterns
+        if len(CYTOGENETIC_ADVERSE) > 0:
+            # Combine all patterns into a single regex OR
+            combined_pat = "(?:" + ")|(?:".join(CYTOGENETIC_ADVERSE) + ")"
+            any_adv_series = cytogenetics.str.contains(
+                combined_pat, case=False, regex=True, na=False
+            ).astype(int)
+        else:
+            any_adv_series = pd.Series(0, index=cytogenetics.index)
+
+        # any_adverse_cyto is the OR of named adverse flags and the combined config-based check
+        base_any = result_df[list(adverse_features.keys())].max(axis=1)
+        result_df["any_adverse_cyto"] = base_any.combine(
+            any_adv_series, func=lambda a, b: int(max(a, b))
         )
+
+        # Optionally add common monosomy/trisomy binary flags for audit/aux features
+        if CYTO_FEATURE_TOGGLES.get("include_common_events", True):
+            for patt in CYTOGENETIC_COMMON_MONOSOMIES:
+                chrom = patt.replace("\\b", "").lstrip("-")
+                col = f"mono_{chrom}"
+                result_df[col] = cytogenetics.str.contains(
+                    patt, case=False, regex=True, na=False
+                ).astype(int)
+            for patt in CYTOGENETIC_COMMON_TRISOMIES:
+                chrom = patt.replace("\\b", "").lstrip("+")
+                col = f"tri_{chrom}"
+                result_df[col] = cytogenetics.str.contains(
+                    patt, case=False, regex=True, na=False
+                ).astype(int)
 
         return result_df
 
@@ -316,9 +354,40 @@ class CytogeneticFeatureExtraction:
     ) -> pd.DataFrame:
         """Extract cytogenetic complexity metrics."""
 
-        # Helper to clean bracketed clone counts like [5]
+        # Helper to clean bracketed clone counts like [5] and tolerate malformed braces
         def _remove_brackets(s: str) -> str:
-            return re.sub(r"\[[^\]]*\]", "", s)
+            if not isinstance(s, str):
+                return ""
+            # Remove square or curly bracketed contents, e.g., [5], {6}
+            s = re.sub(r"\[[^\]]*\]", "", s)
+            s = re.sub(r"\{[^\}]*\}", "", s)
+            # Drop stray unmatched braces to avoid polluting tokens
+            s = re.sub(r"[\[\]\{\}]", "", s)
+            return s
+
+        # Count events from a pure events string (no baseline digits or XX/XY)
+        def _count_from_events_str(events_str: str) -> dict:
+            events_str = events_str or ""
+            return {
+                "n_t": len(re.findall(r"t\(", events_str, flags=re.IGNORECASE)),
+                "n_del": len(re.findall(r"del\(", events_str, flags=re.IGNORECASE)),
+                "n_inv": len(re.findall(r"inv\(", events_str, flags=re.IGNORECASE)),
+                "n_add": len(re.findall(r"add\(", events_str, flags=re.IGNORECASE)),
+                "n_der": len(re.findall(r"der\(", events_str, flags=re.IGNORECASE)),
+                "n_ins": len(re.findall(r"ins\(", events_str, flags=re.IGNORECASE)),
+                "n_i": len(re.findall(r"\bi\(", events_str, flags=re.IGNORECASE)),
+                "n_dic": len(re.findall(r"\bdic\(", events_str, flags=re.IGNORECASE)),
+                "n_plus": len(
+                    re.findall(r"\+(?:\d+|X|Y|mar)\b", events_str, flags=re.IGNORECASE)
+                ),
+                "n_minus": len(
+                    re.findall(r"-(?:\d+|X|Y)\b", events_str, flags=re.IGNORECASE)
+                ),
+                "n_mar": len(re.findall(r"\+mar\b", events_str, flags=re.IGNORECASE)),
+                "has_idem": (
+                    1 if re.search(r"\bidem\b", events_str, flags=re.IGNORECASE) else 0
+                ),
+            }
 
         def _count_events_in_clone(clone_text: str) -> dict:
             text = _remove_brackets(clone_text)
@@ -333,26 +402,20 @@ class CytogeneticFeatureExtraction:
             ):
                 start_idx = 2
             events_str = ",".join(tokens[start_idx:])
-            counts = {
-                "n_t": len(re.findall(r"t\(", events_str, flags=re.IGNORECASE)),
-                "n_del": len(re.findall(r"del\(", events_str, flags=re.IGNORECASE)),
-                "n_inv": len(re.findall(r"inv\(", events_str, flags=re.IGNORECASE)),
-                "n_add": len(re.findall(r"add\(", events_str, flags=re.IGNORECASE)),
-                "n_der": len(re.findall(r"der\(", events_str, flags=re.IGNORECASE)),
-                "n_ins": len(re.findall(r"ins\(", events_str, flags=re.IGNORECASE)),
-                "n_i": len(re.findall(r"\bi\(", events_str, flags=re.IGNORECASE)),
-                "n_plus": len(
-                    re.findall(r"\+(?:\d+|X|Y|mar)\b", events_str, flags=re.IGNORECASE)
-                ),
-                "n_minus": len(
-                    re.findall(r"-(?:\d+|X|Y)\b", events_str, flags=re.IGNORECASE)
-                ),
-                "n_mar": len(re.findall(r"\+mar\b", events_str, flags=re.IGNORECASE)),
-                "has_idem": (
-                    1 if re.search(r"\bidem\b", events_str, flags=re.IGNORECASE) else 0
-                ),
-            }
-            return counts
+            return _count_from_events_str(events_str)
+
+        def _events_string_from_clone(clone_text: str) -> str:
+            """Return just the events portion of a clone (without baseline), cleaned of brackets."""
+            text = _remove_brackets(clone_text)
+            tokens = [t.strip() for t in text.split(",") if t.strip()]
+            start_idx = 0
+            if len(tokens) >= 1 and re.fullmatch(r"\d{2,}", tokens[0]):
+                start_idx = 1
+            if len(tokens) >= 2 and re.fullmatch(
+                r"X{2}|XY", tokens[1], flags=re.IGNORECASE
+            ):
+                start_idx = 2
+            return ",".join(tokens[start_idx:])
 
         def count_abnormalities_and_types(cyto_string: str) -> dict:
             if not isinstance(cyto_string, str) or cyto_string.strip() == "":
@@ -385,15 +448,41 @@ class CytogeneticFeatureExtraction:
                 "n_der": 0,
                 "n_ins": 0,
                 "n_i": 0,
+                "n_dic": 0,
                 "n_plus": 0,
                 "n_minus": 0,
                 "n_mar": 0,
                 "has_idem": 0,
             }
+            prev_events = ""
             for clone in clones:
-                c = _count_events_in_clone(clone)
+                events_str = _events_string_from_clone(clone)
+                # Expand 'idem' clones: inherit previous events and add new ones
+                idem_here = (
+                    1 if re.search(r"\bidem\b", events_str, flags=re.IGNORECASE) else 0
+                )
+                if idem_here:
+                    # Remove the token 'idem' and any adjacent punctuation
+                    addon = re.sub(
+                        r"\bidem\b\s*,?", "", events_str, flags=re.IGNORECASE
+                    ).strip(", ")
+                    expanded = prev_events
+                    if addon:
+                        expanded = f"{expanded},{addon}" if expanded else addon
+                    c = _count_from_events_str(expanded)
+                else:
+                    c = _count_from_events_str(events_str)
                 for k in agg:
                     agg[k] += c[k]
+                # Ensure 'has_idem' reflects token presence even when expanded
+                agg["has_idem"] += idem_here
+                # Update prev_events for next potential 'idem' usage
+                prev_events = (
+                    re.sub(r"\bidem\b\s*,?", "", events_str, flags=re.IGNORECASE).strip(
+                        ", "
+                    )
+                    or prev_events
+                )
             # Derive totals
             structural = (
                 agg["n_t"]
@@ -403,6 +492,7 @@ class CytogeneticFeatureExtraction:
                 + agg["n_der"]
                 + agg["n_ins"]
                 + agg["n_i"]
+                + agg["n_dic"]
             )
             numerical = agg["n_plus"] + agg["n_minus"]
             total = structural + numerical
@@ -489,6 +579,38 @@ class MolecularFeatureExtraction:
         important_genes: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         important_genes = important_genes or ALL_IMPORTANT_GENES
+
+        # Frequency filter (optional)
+        cfg = MOLECULAR_GENE_FREQ_FILTER or {}
+        if cfg.get("enabled", False):
+            min_total = int(cfg.get("min_total_count", 5))
+            ref = cfg.get("reference", "reports")
+            if ref == "reports":
+                train_p = cfg.get("train_counts_path")
+                test_p = cfg.get("test_counts_path")
+                counts = []
+                for pth in [train_p, test_p]:
+                    if pth and os.path.exists(pth):
+                        dfc = pd.read_csv(pth)
+                        # expected columns: GENE,count
+                        if "GENE" in dfc.columns and "count" in dfc.columns:
+                            counts.append(dfc.set_index("GENE")["count"])
+                if counts:
+                    total_counts = counts[0]
+                    for s in counts[1:]:
+                        total_counts = total_counts.add(s, fill_value=0)
+                    keep = {g for g, c in total_counts.items() if c >= min_total}
+                    important_genes = [g for g in important_genes if g in keep]
+            elif ref == "current" and maf_df is not None and not maf_df.empty:
+                gene_col = None
+                for cand in ["GENE", "Hugo_Symbol", "Gene", "Gene_Symbol"]:
+                    if cand in maf_df.columns:
+                        gene_col = cand
+                        break
+                if gene_col:
+                    vc = maf_df[gene_col].value_counts()
+                    keep = set(vc[vc >= min_total].index.tolist())
+                    important_genes = [g for g in important_genes if g in keep]
 
         if df is None or df.empty:
             return pd.DataFrame()

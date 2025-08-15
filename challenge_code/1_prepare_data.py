@@ -4,7 +4,13 @@ from src.data.data_extraction.external_data_manager import ExternalDataManager
 from src.modeling.pipeline_components import get_preprocessing_pipeline
 import joblib
 from src.config import PREPROCESSING, EXPERIMENT, CLINICAL_RANGES
-from src.utils.experiment import compute_tag, save_manifest, save_feature_list
+from src.utils.experiment import (
+    compute_tag,
+    save_manifest,
+    save_feature_list,
+    ensure_experiment_dir,
+    get_full_config_snapshot,
+)
 
 # --- 1. IMPORTATION DE VOTRE LOGIQUE MÉTIER ---
 # Assurez-vous que le dossier 'src' est accessible depuis l'endroit où vous lancez ce script
@@ -105,7 +111,17 @@ def main():
         },
         "clinical_ranges": CLINICAL_RANGES,
     }
-    save_manifest(tag, full_config=cfg_slice, extra=extras)
+    exp_dir = save_manifest(tag, full_config=cfg_slice, extra=extras)
+    # Save the full config snapshot for complete traceability
+    try:
+        full_cfg = get_full_config_snapshot()
+        base = ensure_experiment_dir(tag)
+        with open(os.path.join(base, "config_full.json"), "w", encoding="utf-8") as f:
+            import json as _json
+
+            _json.dump(full_cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[TRACE] Impossible d'enregistrer config_full.json: {e}")
     print("[REPORT] Prétraitement: ")
     print(
         f"         - imputer: {PREPROCESSING.get('imputer')}\n"

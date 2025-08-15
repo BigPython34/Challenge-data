@@ -61,6 +61,7 @@ CYTOGENETIC_ADVERSE = [
     r"-5\b|del\(5q\)",  # -5 or del(5q)
     r"-7\b|del\(7q\)",  # -7 or del(7q)
     r"del\(17p\)|17p-",  # del(17p) or i(17q)
+    r"-13\b|del\(13q\)",  # -13 or del(13q)
     r"inv\(3\)|t\(3;3\)",  # inv(3)(q21q26.2) or t(3;3)(q21;q26.2); GATA2, MECOM
     r"t\(6;9\)",  # t(6;9)(p23;q34.1); DEK-NUP214
     r"t\(9;22\)",  # t(9;22)(q34.1;q11.2); BCR-ABL1
@@ -145,6 +146,7 @@ SECOND_TIER_DISCOVERED_GENES = ["GATA2", "KMT2C", "BCORL1", "MPL", "SH2B3", "CSN
 # Additional frequently mutated genes discovered in dataset but absent from the default config
 # Sourced from exploratory analysis (top counts):
 DISCOVERED_TOP_MISSING_GENES = [
+    # From earlier exploration
     "ETNK1",
     "BRCC3",
     "CTCF",
@@ -160,6 +162,16 @@ DISCOVERED_TOP_MISSING_GENES = [
     "CREBBP",
     "NFE2",
     "CSF3R",
+    # Added 2025-08-14 from train/test intersection (conservative)
+    # Cohesin/related & chromatin modifiers frequently observed in both splits
+    "RAD21",
+    "SMC1A",
+    "SMC3",
+    "KDM6A",
+    "SUZ12",
+    "EED",
+    # Signaling
+    "STAT3",
 ]
 
 # --- LISTE FINALE ET COMPLÈTE ---
@@ -180,12 +192,60 @@ ALL_IMPORTANT_GENES = list(
 GENE_PATHWAYS = {
     "DNA_methylation": ["DNMT3A", "TET2", "IDH1", "IDH2"],
     "RNA_splicing": ["SF3B1", "SRSF2", "U2AF1", "ZRSR2"],
-    "Chromatin_modification": ["ASXL1", "EZH2", "BCOR"],
+    "Chromatin_modification": ["ASXL1", "EZH2", "BCOR", "KDM6A", "SUZ12", "EED"],
     "Transcription_factors": ["NPM1", "CEBPA", "RUNX1"],
     "Tumor_suppressor": ["TP53"],
     "Tyrosine_kinase": ["FLT3", "KIT"],
     "RAS_signaling": ["NRAS", "KRAS", "PTPN11"],
-    "Cohesin_complex": ["STAG2"],
+    "Cohesin_complex": ["STAG2", "RAD21", "SMC1A", "SMC3"],
+    # Optional: JAK/STAT
+    "JAK_STAT": ["STAT3"],
+}
+
+# Common cyto events discovered (kept separate to avoid altering ELN rules)
+CYTOGENETIC_COMMON_MONOSOMIES = [
+    r"-7\b",
+    r"-5\b",
+    r"-18\b",
+    r"-17\b",
+    r"-20\b",
+    r"-16\b",
+    r"-13\b",
+    r"-21\b",
+    r"-12\b",
+]
+CYTOGENETIC_COMMON_TRISOMIES = [
+    r"\+8\b",
+    r"\+1\b",
+    r"\+11\b",
+    r"\+21\b",
+    r"\+13\b",
+    r"\+19\b",
+    r"\+9\b",
+    r"\+20\b",
+]
+
+# Toggle for including additional common cyto event features (binary flags)
+CYTO_FEATURE_TOGGLES = {
+    "include_common_events": False,  # add mono_X / tri_Y columns for common events
+}
+
+# Frequency-based gene filtering for molecular features
+# If enabled, restrict ALL_IMPORTANT_GENES to those observed with at least
+# `min_total_count` occurrences in the chosen reference.
+MOLECULAR_GENE_FREQ_FILTER = {
+    "enabled": True,
+    "min_total_count": 5,
+    # reference: "reports" uses precomputed counts from data exploration (train+test),
+    #            "current" uses counts from the provided MAF (per-run dataset)
+    "reference": "reports",
+    # default relative paths (from project root)
+    "train_counts_path": os.path.join(
+        BASE_DIR, "reports", "data_explore", "train", "molecular_gene_counts.csv"
+    ),
+    "test_counts_path": os.path.join(
+        BASE_DIR, "reports", "data_explore", "test", "molecular_gene_counts.csv"
+    ),
 }
 
 # Molecular feature toggles and thresholds
@@ -238,7 +298,7 @@ PREPROCESSING = {
     "knn": {"n_neighbors": 4},
     # Iterative imputer parameters (for documentation/traceability)
     "iterative": {
-        "max_iter": 70,
+        "max_iter": 120,
         "estimator": "RandomForest",
         "estimator_n_estimators": 40,
         "random_state": SEED,
@@ -278,7 +338,7 @@ PREPROCESSING = {
 
 # Experiment metadata and toggles
 EXPERIMENT = {
-    "name": "baseline_knn_supervised_mono",
+    "name": "baseline_supervised_mono",
     # Use supervised MONOCYTES imputation trained on train-only
     "use_monocyte_supervised": True,
     # If True, keeps MONOCYTES_missing indicator; else drop to reduce drift

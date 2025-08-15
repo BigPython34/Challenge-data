@@ -99,7 +99,10 @@ def predict_and_submit():
     # Save a copy under the experiment directory and chosen model list
     exp_pred_name = f"predictions_{model_tag}_{ts}.csv"
     save_predictions(tag, df_pred, filename=exp_pred_name)
-    with open(os.path.join(exp_dir, "chosen_models.json"), "w", encoding="utf-8") as f:
+    all_models_str = "+".join(chosen)
+    with open(
+        os.path.join(exp_dir, f"{all_models_str}_models.json"), "w", encoding="utf-8"
+    ) as f:
         json.dump({"chosen_models": chosen, "timestamp": ts}, f, indent=2)
 
     print(f"Saved: {fname}")

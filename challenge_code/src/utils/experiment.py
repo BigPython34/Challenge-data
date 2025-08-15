@@ -43,6 +43,29 @@ def ensure_experiment_dir(tag: str) -> str:
     return base
 
 
+def get_full_config_snapshot() -> Dict[str, Any]:
+    """Return a JSON-serializable snapshot of all uppercase items in src.config.
+
+    Non-serializable values are stringified to avoid save failures.
+    """
+    import src.config as cfg  # local import to avoid cyclics at module import
+
+    snapshot: Dict[str, Any] = {}
+    for name in dir(cfg):
+        if not name.isupper():
+            continue
+        if name.startswith("__"):
+            continue
+        val = getattr(cfg, name)
+        # Try JSON encode to validate, else fallback to str
+        try:
+            json.dumps(val, ensure_ascii=False)
+            snapshot[name] = val
+        except TypeError:
+            snapshot[name] = str(val)
+    return snapshot
+
+
 def save_manifest(
     tag: str, full_config: Dict[str, Any], extra: Optional[Dict[str, Any]] = None
 ) -> str:
