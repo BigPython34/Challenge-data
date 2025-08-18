@@ -28,6 +28,7 @@ from sklearn.experimental import (
     enable_iterative_imputer,
 )  # noqa: F401 (side-effect import)
 from src.data.data_cleaning.imputer import supervised_monocyte_imputation
+from src.data.features.pruning import prune_highly_correlated_features_pair
 
 
 # --- 4. FONCTION D'ORCHESTRATION DU FEATURE ENGINEERING ---
@@ -318,10 +319,29 @@ def main():
 
     if drop_cols:
         print(
-            f"[PREPROCESSING] Suppression de {len(drop_cols)} colonnes à variance nulle: {drop_cols[:10]}{'...' if len(drop_cols)>10 else ''}"
+            f"[PREPROCESSING] Suppression de {len(drop_cols)} colonnes à variance nulle: {drop_cols}"
         )
         X_train_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
         X_test_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
+
+    # --- ÉTAPE 5.2: PRUNING OPTIONNEL DES FEATURES FORTEMENT CORRÉLÉES ---
+    try:
+        if EXPERIMENT.get("prune_feature", False):
+            thr = float(EXPERIMENT.get("prune_feature_threshold", 0.90))
+            print("\n" + "=" * 50)
+            print("ÉTAPE 5.2: PRUNING DES FEATURES FORTEMENT CORRÉLÉES")
+            print("=" * 50)
+            # Préserver ID et CENTER_GROUP
+            X_train_processed_df, X_test_processed_df = (
+                prune_highly_correlated_features_pair(
+                    X_train_processed_df,
+                    X_test_processed_df,
+                    threshold=thr,
+                    id_cols=("ID", "CENTER_GROUP"),
+                )
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[PRUNING] Ignoré suite à une erreur non bloquante: {e}")
 
     # --- ÉTAPE 6: SAUVEGARDE DES DONNÉES FINALES ET DES ARTEFACTS ---
     print("\n" + "=" * 50)

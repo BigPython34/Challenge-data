@@ -17,6 +17,7 @@ from ...config import (
     CLINICAL_THRESHOLDS,
     CLINICAL_LOG_COLUMNS,
     MISSINGNESS_POLICY,
+    CREATE_LOG_COLUMNS,
     # Cytogenetics
     CYTOGENETIC_FAVORABLE,
     CYTOGENETIC_ADVERSE,
@@ -62,9 +63,11 @@ class ClinicalFeatureEngineering:
             clinical_df
         )
         clinical_df = ClinicalFeatureEngineering._create_composite_scores(clinical_df)
-        clinical_df = ClinicalFeatureEngineering._create_log_transformations(
-            clinical_df
-        )
+
+        if CREATE_LOG_COLUMNS:
+            clinical_df = ClinicalFeatureEngineering._create_log_transformations(
+                clinical_df
+            )
         clinical_df.replace([np.inf, -np.inf], np.nan, inplace=True)
         clinical_df = _apply_redundancy_policy(clinical_df)
         return clinical_df
@@ -227,9 +230,9 @@ class CytogeneticFeatureExtraction:
         # Chromosome count with validation
         chromosome_count = cytogenetics.str.extract(r"(\d+)")[0]
         chromosome_count = pd.to_numeric(chromosome_count, errors="coerce")
-        # Keep NaN for unknown/out-of-range instead of coercing to 46 to avoid false diploid assumptions
+        # Keep NaN for unknown/out-of-range; expand range to capture near-tetraploidy
         chromosome_count = chromosome_count.where(
-            (chromosome_count >= 30) & (chromosome_count <= 80), np.nan
+            (chromosome_count >= 20) & (chromosome_count <= 120), np.nan
         )
         result_df["chromosome_count"] = chromosome_count
 
@@ -243,6 +246,17 @@ class CytogeneticFeatureExtraction:
         result_df["SEX_XX"] = xx_mask.astype(int)
         result_df["SEX_XY"] = xy_mask.astype(int)
         result_df["SEX_UNKNOWN"] = (~xx_mask & ~xy_mask).astype(int)
+
+        # Extended ploidy categories (optional)
+        if CYTO_FEATURE_TOGGLES.get("extended_features", False):
+            result_df["hypodiploidy"] = (chromosome_count < 46).astype(int)
+            result_df["hyperdiploidy"] = (chromosome_count >= 49).astype(int)
+            result_df["near_triploidy"] = (
+                (chromosome_count >= 60) & (chromosome_count <= 80)
+            ).astype(int)
+            result_df["near_tetraploidy"] = (
+                (chromosome_count >= 81) & (chromosome_count <= 103)
+            ).astype(int)
 
         return result_df
 
@@ -332,7 +346,7 @@ class CytogeneticFeatureExtraction:
         )
 
         # Optionally add common monosomy/trisomy binary flags for audit/aux features
-        if CYTO_FEATURE_TOGGLES.get("include_common_events", True):
+        if CYTO_FEATURE_TOGGLES.get("include_common_events", False):
             for patt in CYTOGENETIC_COMMON_MONOSOMIES:
                 chrom = patt.replace("\\b", "").lstrip("-")
                 col = f"mono_{chrom}"
@@ -345,6 +359,23 @@ class CytogeneticFeatureExtraction:
                 result_df[col] = cytogenetics.str.contains(
                     patt, case=False, regex=True, na=False
                 ).astype(int)
+
+        # Extended explicit flags (optional) for auditability
+        if CYTO_FEATURE_TOGGLES.get("extended_features", False):
+            result_df["t_6_9"] = cytogenetics.str.contains(
+                r"\bt\(6;9\)\b", case=False, na=False
+            ).astype(int)
+            result_df["t_9_22"] = cytogenetics.str.contains(
+                r"\bt\(9;22\)\b", case=False, na=False
+            ).astype(int)
+            result_df["rearr_3q26"] = cytogenetics.str.contains(
+                r"(?:inv\(3\)\(q21;q26\)|t\(3;3\)\(q21;q26\))",
+                case=False,
+                na=False,
+            ).astype(int)
+            result_df["del_12p"] = cytogenetics.str.contains(
+                r"del\(12\)\(p", case=False, na=False
+            ).astype(int)
 
         return result_df
 
@@ -525,15 +556,73 @@ class CytogeneticFeatureExtraction:
             result_df["num_cyto_abnormalities"] >= COMPLEX_KARYOTYPE_MIN_ABNORMALITIES
         ).astype(int)
         # Provide a stabilized, monotonic transform without hard capping information
-        result_df["log_num_cyto_abnormalities"] = np.log1p(
-            result_df["num_cyto_abnormalities"].astype(float)
-        )
+        if CREATE_LOG_COLUMNS:
+            result_df["log_num_cyto_abnormalities"] = np.log1p(
+                result_df["num_cyto_abnormalities"].astype(float)
+            )
         result_df["has_derivative_chromosome"] = cytogenetics.str.contains(
             r"\bder\(", case=False, na=False
         ).astype(int)
         result_df["has_marker_chromosome"] = cytogenetics.str.contains(
             r"\+mar\b", case=False, na=False
         ).astype(int)
+
+        # Extended structural/proxy features
+        if CYTO_FEATURE_TOGGLES.get("extended_features", False):
+            # rings and counts
+            result_df["has_ring_chromosome"] = cytogenetics.str.contains(
+                r"\br\(|\bring\b", case=False, na=False
+            ).astype(int)
+            result_df["n_ring"] = (
+                cytogenetics.str.count(r"\br\(", flags=re.IGNORECASE)
+                .fillna(0)
+                .astype(int)
+            )
+            # double minutes
+            result_df["has_double_minutes"] = cytogenetics.str.contains(
+                r"\bdmin\b", case=False, na=False
+            ).astype(int)
+            result_df["n_dmin"] = (
+                cytogenetics.str.count(r"\bdmin\b", flags=re.IGNORECASE)
+                .fillna(0)
+                .astype(int)
+            )
+            # composite clones cpN
+            cp_extracted = cytogenetics.str.extractall(
+                r"\bcp(\d+)\b", flags=re.IGNORECASE
+            )[0]
+            cp_max = cp_extracted.groupby(level=0).apply(
+                lambda s: pd.to_numeric(s, errors="coerce").max()
+            )
+            result_df["cp_max"] = (
+                result_df.index.to_series().map(cp_max).fillna(0).astype(int)
+            )
+            result_df["cp_any"] = (result_df["cp_max"] > 0).astype(int)
+            # incomplete karyotype markers
+            result_df["incomplete_karyotype"] = cytogenetics.str.contains(
+                r"\binc\b|incomplete", case=False, na=False
+            ).astype(int)
+
+            # Monosomal karyotype (MK): ≥2 autosomal monosomies or 1 + any structural abnormality
+            def _autosomal_mono_count(s: str) -> int:
+                if not isinstance(s, str):
+                    return 0
+                return len(re.findall(r"-(?:[1-9]|1\d|2[0-2])\b", s))
+
+            autosomal_mono = cytogenetics.apply(_autosomal_mono_count)
+            structural_any = (
+                result_df["n_t"]
+                + result_df["n_del"]
+                + result_df["n_inv"]
+                + result_df["n_add"]
+                + result_df["n_der"]
+                + result_df["n_ins"]
+                + result_df["n_i"]
+                + result_df["n_dic"]
+            ) > 0
+            result_df["monosomal_karyotype"] = (
+                (autosomal_mono >= 2) | ((autosomal_mono == 1) & structural_any)
+            ).astype(int)
 
         return result_df
 
@@ -777,8 +866,9 @@ class MolecularFeatureExtraction:
                 .astype(str)
                 .str.contains(truncating_pattern, case=False, na=False)
             ]["ID"].unique()
-            molecular_df["TP53_truncating"] = molecular_df.index.isin(
-                tp53_truncating
+            # Use patient IDs, not the numeric DataFrame index
+            molecular_df["TP53_truncating"] = (
+                molecular_df["ID"].astype(str).isin(tp53_truncating)
             ).astype(int)
         else:
             molecular_df["TP53_truncating"] = 0
@@ -787,8 +877,9 @@ class MolecularFeatureExtraction:
         if "CEBPA" in maf_df["GENE"].values:
             cebpa_counts = maf_df[maf_df["GENE"] == "CEBPA"]["ID"].value_counts()
             biallelic_patients = cebpa_counts[cebpa_counts >= 2].index
-            molecular_df["CEBPA_biallelic"] = molecular_df.index.isin(
-                biallelic_patients
+            # Use patient IDs, not the numeric DataFrame index
+            molecular_df["CEBPA_biallelic"] = (
+                molecular_df["ID"].astype(str).isin(biallelic_patients)
             ).astype(int)
         else:
             molecular_df["CEBPA_biallelic"] = 0
@@ -819,12 +910,13 @@ class MolecularFeatureExtraction:
                 else pd.Series(False, index=flt3_rows.index)
             )
             tkd_ids = set(flt3_rows.loc[tkd_pat, "ID"].astype(str))
+            # Use patient IDs, not the numeric DataFrame index
             molecular_df["FLT3_ITD"] = (
-                molecular_df.index.astype(str).isin(itd_ids).astype(int)
-            )
+                molecular_df["ID"].astype(str).isin(itd_ids)
+            ).astype(int)
             molecular_df["FLT3_TKD"] = (
-                molecular_df.index.astype(str).isin(tkd_ids).astype(int)
-            )
+                molecular_df["ID"].astype(str).isin(tkd_ids)
+            ).astype(int)
         else:
             molecular_df["FLT3_ITD"] = 0
             molecular_df["FLT3_TKD"] = 0

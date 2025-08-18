@@ -20,6 +20,7 @@ CLINICAL_RANGES = {
     "HB": (2, 25),
 }
 
+CREATE_LOG_COLUMNS = False
 # Clinical feature engineering configuration (traceable)
 CLINICAL_NUMERIC_COLUMNS = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
 CLINICAL_RATIOS = {
@@ -51,31 +52,43 @@ MISSINGNESS_POLICY = {
 # Based on ELN 2022 recommendations for cytogenetic risk stratification
 
 CYTOGENETIC_FAVORABLE = [
-    r"t\(8;21\)",  # t(8;21)(q22;q22.1); RUNX1-RUNX1T1
-    r"inv\(16\)",  # inv(16)(p13.1q22)
-    r"t\(16;16\)",  # t(16;16)(p13.1;q22); CBFB-MYH11
-    r"t\(15;17\)",  # t(15;17)(q24;q21.2); PML-RARA
+    # Recherche "t(8;21)"
+    r"t\(8;21\)",
+    # Recherche "inv(16)" de manière robuste
+    r"inv\(16\)\(p",
+    # Recherche "t(16;16)" de manière robuste
+    r"t\(16;16\)\(p",
+    # Recherche "t(15;17)"
+    r"t\(15;17\)",
 ]
 
 CYTOGENETIC_ADVERSE = [
-    r"-5\b|del\(5q\)",  # -5 or del(5q)
-    r"-7\b|del\(7q\)",  # -7 or del(7q)
-    r"del\(17p\)|17p-",  # del(17p) or i(17q)
-    r"-13\b|del\(13q\)",  # -13 or del(13q)
-    r"inv\(3\)|t\(3;3\)",  # inv(3)(q21q26.2) or t(3;3)(q21;q26.2); GATA2, MECOM
-    r"t\(6;9\)",  # t(6;9)(p23;q34.1); DEK-NUP214
-    r"t\(9;22\)",  # t(9;22)(q34.1;q11.2); BCR-ABL1
-    # Complex karyotype (≥3 unrelated chromosome abnormalities)
+    # Monosomie 5 ou délétion du bras long 'q'
+    r"-5\b|del\(5\)\(q",
+    # Monosomie 7 ou délétion du bras long 'q'
+    r"-7\b|del\(7\)\(q",
+    # Délétion du bras court 'p' du chr 17, isochromosome 17q, ou notation 17p-
+    r"del\(17\)\(p|i\(17\)\(q|17p-",
+    # Monosomie 13 ou délétion du bras long 'q'
+    r"-13\b|del\(13\)\(q",
+    # Anomalies impliquant la bande 3q
+    r"inv\(3\)\(q|t\(3;3\)\(q",
+    # Translocation t(6;9)
+    r"t\(6;9\)",
+    # Translocation t(9;22)
+    r"t\(9;22\)",
 ]
 
 CYTOGENETIC_INTERMEDIATE = [
-    r"^46,X[XY]$",  # Normal karyotype
-    r"\+8\b",  # Trisomy 8
-    r"t\(9;11\)",  # t(9;11)(p21.3;q23.3); MLLT3-KMT2A
-    r"11q23",  # Other KMT2A rearrangements
-    # All other cytogenetic abnormalities not classified as favorable or adverse
+    # Caryotype normal strict
+    r"^46,X[XY](,|$|\s|\[)",
+    # Trisomie 8
+    r"\+8\b",
+    # Translocation t(9;11)
+    r"t\(9;11\)",
+    # Recherche générale d'anomalies de 11q23 (autres réarrangements KMT2A)
+    r"11q23",
 ]
-
 # Complexity definition and ELN encoding controls
 COMPLEX_KARYOTYPE_MIN_ABNORMALITIES = 3
 ELN_CYTO_RISK_ENCODING = {
@@ -227,7 +240,10 @@ CYTOGENETIC_COMMON_TRISOMIES = [
 
 # Toggle for including additional common cyto event features (binary flags)
 CYTO_FEATURE_TOGGLES = {
-    "include_common_events": False,  # add mono_X / tri_Y columns for common events
+    # Master switch for additional cytogenetic features beyond core ELN rules
+    "extended_features": True,
+    # Add mono_X / tri_Y columns for common events (also enabled when extended_features is True)
+    "include_common_events": False,
 }
 
 # Frequency-based gene filtering for molecular features
@@ -298,9 +314,9 @@ PREPROCESSING = {
     "knn": {"n_neighbors": 4},
     # Iterative imputer parameters (for documentation/traceability)
     "iterative": {
-        "max_iter": 120,
+        "max_iter": 300,
         "estimator": "RandomForest",
-        "estimator_n_estimators": 40,
+        "estimator_n_estimators": 70,
         "random_state": SEED,
     },
     # Supervised MONOCYTES imputer parameters (train-only model)
@@ -349,6 +365,10 @@ EXPERIMENT = {
     "model_family": "rsf",
     # Random seed propagated to components
     "random_seed": SEED,
+    # Optionally prune highly correlated features after preprocessing
+    "prune_feature": False,
+    # Correlation threshold used when prune_feature is True
+    "prune_feature_threshold": 0.90,
 }
 
 # Model parameters

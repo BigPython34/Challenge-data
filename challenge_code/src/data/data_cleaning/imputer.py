@@ -3,7 +3,7 @@ from typing import List
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.experimental import (
     enable_iterative_imputer,
-)  # noqa: F401 (side-effect import)
+)
 from sklearn.impute import KNNImputer, IterativeImputer
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer

@@ -170,41 +170,60 @@ def _clean_molecular_data(
     molecular_df: pd.DataFrame, target_clean: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Clean and validate molecular mutation data.
-
-    Parameters
-    ----------
-    molecular_df : pd.DataFrame
-        Raw molecular data
-    target_clean : pd.DataFrame
-        Cleaned survival data for patient filtering
-
-    Returns
-    -------
-    pd.DataFrame
-        Cleaned molecular data
+    Nettoie et valide les données de mutation, avec une gestion spéciale
+    pour les événements cliniques importants comme FLT3_ITD.
     """
     print("Cleaning molecular data...")
 
-    # Keep only patients with survival data
     molecular_clean = molecular_df[molecular_df["ID"].isin(target_clean["ID"])].copy()
 
-    # Validate mutation data
     molecular_clean["VAF"] = pd.to_numeric(molecular_clean["VAF"], errors="coerce")
     molecular_clean["DEPTH"] = pd.to_numeric(molecular_clean["DEPTH"], errors="coerce")
 
-    # Filter low-quality mutations
-    # VAF must be between 0 and 1, depth > 10 for reliability
-    valid_mutations = (
+    # --- LOGIQUE DE FILTRAGE AMÉLIORÉE ---
+
+    # Critère 1: Mutations de haute qualité (avec VAF et DEPTH valides)
+    high_quality_mutations = (
         (molecular_clean["VAF"] >= 0)
         & (molecular_clean["VAF"] <= 1)
         & (molecular_clean["DEPTH"] >= 10)
     )
 
-    invalid_count = (~valid_mutations).sum()
-    if invalid_count > 0:
-        print(f"   Removing {invalid_count} low-quality mutations")
-        molecular_clean = molecular_clean[valid_mutations]
+    # Critère 2: Mutations cliniquement cruciales qui doivent être conservées
+    # même si certaines métriques de qualité sont manquantes.
+    # On identifie les FLT3_ITD par la colonne 'EFFECT' ou 'PROTEIN_CHANGE'.
+    is_flt3_itd = (molecular_clean["EFFECT"].astype(str).str.upper() == "ITD") | (
+        molecular_clean["PROTEIN_CHANGE"]
+        .astype(str)
+        .str.contains("ITD", na=False, case=False)
+    )
+
+    # Préserver également les événements MLL/KMT2A de type PTD (Partial Tandem Duplication),
+    # souvent rapportés sans DEPTH complet mais cliniquement importants.
+    gene_str = molecular_clean["GENE"].astype(str).str.upper()
+    effect_str = molecular_clean["EFFECT"].astype(str).str.upper()
+    protein_str = molecular_clean["PROTEIN_CHANGE"].astype(str).str.upper()
+    is_mll_gene = gene_str.isin(["MLL", "KMT2A"])  # synonymes
+    has_ptd = effect_str.str.contains("PTD", na=False) | protein_str.str.contains(
+        "PTD|MLL_PTD", na=False
+    )
+    is_mll_ptd = is_mll_gene & has_ptd
+
+    # Une mutation est valide si elle est de haute qualité OU si c'est un FLT3_ITD
+    valid_mutations = high_quality_mutations | is_flt3_itd | is_mll_ptd
+
+    # Compter uniquement les mutations supprimées qui n'étaient PAS des FLT3_ITD
+    removed_count = (~high_quality_mutations & ~is_flt3_itd & ~is_mll_ptd).sum()
+
+    if removed_count > 0:
+        print(
+            f"   Removing {removed_count} low-quality mutations (FLT3_ITD's are preserved)"
+        )
+        molecular_clean = molecular_clean[
+            valid_mutations
+        ].copy()  # Utiliser .copy() ici
+    else:
+        print("   -> No low-quality mutations removed.")
 
     print(
         f"   Clean molecular data: {len(molecular_clean)} mutations across "
