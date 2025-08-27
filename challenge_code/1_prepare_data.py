@@ -3,7 +3,13 @@ import pandas as pd
 from src.data.data_extraction.external_data_manager import ExternalDataManager
 from src.modeling.pipeline_components import get_preprocessing_pipeline
 import joblib
-from src.config import PREPROCESSING, EXPERIMENT, CLINICAL_RANGES
+from src.config import (
+    PREPROCESSING,
+    EXPERIMENT,
+    CLINICAL_RANGES,
+    MOLECULAR_EXTERNAL_SCORES,
+    RARE_EVENT_PRUNING_TRESHOLD,
+)
 from src.utils.experiment import (
     compute_tag,
     save_manifest,
@@ -20,6 +26,7 @@ from src.data.features.feature_engineering import (
     ClinicalFeatureEngineering,
     CytogeneticFeatureExtraction,
     MolecularFeatureExtraction,
+    CytoMolecularInteractionFeatures,
 )
 
 
@@ -28,63 +35,56 @@ from sklearn.experimental import (
     enable_iterative_imputer,
 )  # noqa: F401 (side-effect import)
 from src.data.data_cleaning.imputer import supervised_monocyte_imputation
-from src.data.features.pruning import prune_highly_correlated_features_pair
+from src.data.features.pruning import (
+    prune_highly_correlated_features_pair,
+    prune_rare_binary_features,
+)
 
 
-# --- 4. FONCTION D'ORCHESTRATION DU FEATURE ENGINEERING ---
 def run_feature_engineering(
     clinical_df: pd.DataFrame,
     molecular_df: pd.DataFrame,
+    important_genes: list,  # Accepte maintenant la liste pré-calculée
     data_manager: ExternalDataManager,
 ) -> pd.DataFrame:
     """
-    Exécute un pipeline de feature engineering de manière linéaire, robuste et simplifiée.
+    Exécute le pipeline de feature engineering complet sur un jeu de données (train ou test).
     """
-    print("\n[FE] Démarrage du Feature Engineering (Pipeline Révisée)...")
+    print("\n[FE] Démarrage du Feature Engineering...")
 
-    # --- Étape 1: Initialisation avec la cohorte clinique ---
     final_df = clinical_df.copy()
     final_df["ID"] = final_df["ID"].astype(str)
-    molecular_df["ID"] = molecular_df["ID"].astype(str)
+    if not molecular_df.empty:
+        molecular_df["ID"] = molecular_df["ID"].astype(str)
 
-    # --- Étape 2: Enrichissement avec les features cliniques ---
-    # La fonction ajoute directement les colonnes au dataframe. Plus besoin de merge.
     print("[FE] Création des features cliniques...")
     final_df = ClinicalFeatureEngineering.create_clinical_features(final_df)
 
-    # --- Étape 3: Enrichissement avec les features cytogénétiques ---
-    # La fonction extrait les features et les retourne alignées avec les IDs.
     print("[FE] Création des features cytogénétiques...")
     cyto_features = CytogeneticFeatureExtraction.extract_cytogenetic_risk_features(
-        final_df[["ID", "CYTOGENETICS"]].copy()  # On ne passe que ce qui est nécessaire
+        final_df[["ID", "CYTOGENETICS"]].copy()
     )
-    # Fusion sécurisée sur 'ID'
     final_df = pd.merge(final_df, cyto_features, on="ID", how="left")
 
-    # --- Étape 4: Enrichissement avec TOUTES les features moléculaires en une seule fois ---
-    print("[FE] Création des features moléculaires (risque et charge)...")
-    # Regroupons la logique dans une fonction "master" pour l'efficacité
+    print("[FE] Création des features moléculaires...")
+    # L'appel à la fonction moléculaire utilise maintenant la liste de gènes fixe
     all_molecular_features = MolecularFeatureExtraction.create_all_molecular_features(
-        final_df[["ID"]], molecular_df, data_manager
+        base_df=final_df[["ID"]],
+        maf_df=molecular_df,
+        important_genes=important_genes,  # Utilisation de la liste fournie
+        external_data_manager=data_manager,
     )
     if not all_molecular_features.empty:
         final_df = pd.merge(final_df, all_molecular_features, on="ID", how="left")
+        mol_cols = [c for c in all_molecular_features.columns if c != "ID"]
+        final_df[mol_cols] = final_df[mol_cols].fillna(0)
 
-    # --- Étape 5: Nettoyage et remplissage final ---
-    # Cette étape est toujours cruciale
-    print("[FE] Nettoyage final post-fusion...")
-
-    # Remplir les NaNs pour les patients sans données moléculaires
-    mol_cols = [c for c in all_molecular_features.columns if c != "ID"]
-    final_df[mol_cols] = final_df[mol_cols].fillna(0)
-
-    # Supprimer les colonnes brutes qui ont été transformées
     final_df = final_df.drop(columns=["CYTOGENETICS"], errors="ignore")
 
     print(f"[FE] Feature Engineering terminé. Shape du dataframe : {final_df.shape}")
     missing_percentage = final_df.isnull().sum().sum() / final_df.size * 100
     print(f"[FE] Taux de valeurs manquantes résiduelles : {missing_percentage:.2f}%")
-
+    final_df = CytoMolecularInteractionFeatures.create_interaction_features(final_df)
     return final_df
 
 
@@ -169,6 +169,41 @@ def main():
     train_df = pd.merge(clinical_train_clean, target_train_clean, on="ID", how="inner")
     test_df = clinical_test_clean.copy()
 
+    # Optionally warm the MyVariant cache once for all variants present in train+test
+    try:
+        if MOLECULAR_EXTERNAL_SCORES.get("myvariant", {}).get(
+            "prefetch_on_prepare", False
+        ):
+            print(
+                "[PREP] Préchargement des annotations MyVariant (cache une seule fois)…"
+            )
+            mol_union = pd.concat(
+                [molecular_train_clean, molecular_test_clean], ignore_index=True
+            )
+            data_manager.ensure_myvariant_cache_for_df(mol_union, snv_only=True)
+        else:
+            print(
+                "[PREP] MyVariant: utilisation du cache existant (pas de re-téléchargement)."
+            )
+    except Exception as e:
+        print(f"[PREP] Préchargement MyVariant ignoré (erreur non bloquante): {e}")
+
+    # Optionally prefetch CADD scores to warm the cache (no-ops if disabled)
+    try:
+        cadd_cfg = MOLECULAR_EXTERNAL_SCORES.get("cadd", {})
+        if cadd_cfg.get("enabled", False) and cadd_cfg.get(
+            "prefetch_on_prepare", False
+        ):
+            print("[PREP] Préchargement des scores CADD (peut être long, réseau)...")
+            data_manager.fetch_and_cache_cadd_scores(molecular_train_clean)
+            data_manager.fetch_and_cache_cadd_scores(molecular_test_clean)
+        else:
+            print(
+                "[PREP] CADD: utilisation du cache existant (pas de re-téléchargement)."
+            )
+    except Exception as e:
+        print(f"[PREP] Préchargement CADD ignoré (erreur non bloquante): {e}")
+
     print("\n[PREP] Regroupement des centres rares...")
     threshold = 40
 
@@ -216,15 +251,29 @@ def main():
         Exception
     ) as e:  # noqa: BLE001 (intentional broad catch to keep pipeline running)
         print(f"[MONO] Imputation supervisée ignorée (erreur): {e}")
+    # --- NOUVELLE ÉTAPE 2.5: DÉTERMINATION DE LA LISTE DE GÈNES ---
+    print("\n" + "=" * 50)
+    print("ÉTAPE 2.5: FILTRAGE DES GÈNES MOLÉCULAIRES")
+    print("=" * 50)
+    # On détermine la liste une seule fois en utilisant les données de train ET de test
+    important_genes_final_list = MolecularFeatureExtraction.get_frequent_genes(
+        train_maf=molecular_train_clean, test_maf=molecular_test_clean
+    )
     # --- ÉTAPE 3: FEATURE ENGINEERING ---
     print("\n" + "=" * 50)
     print("ÉTAPE 3: FEATURE ENGINEERING")
     print("=" * 50)
     X_train_featured = run_feature_engineering(
-        train_df, molecular_train_clean, data_manager
+        clinical_df=train_df,
+        molecular_df=molecular_train_clean,
+        important_genes=important_genes_final_list,
+        data_manager=data_manager,
     )
     X_test_featured = run_feature_engineering(
-        test_df, molecular_test_clean, data_manager
+        clinical_df=test_df,
+        molecular_df=molecular_test_clean,
+        important_genes=important_genes_final_list,
+        data_manager=data_manager,
     )
 
     print("\n" + "=" * 50)
@@ -321,8 +370,8 @@ def main():
         print(
             f"[PREPROCESSING] Suppression de {len(drop_cols)} colonnes à variance nulle: {drop_cols}"
         )
-        X_train_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
-        X_test_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
+    X_train_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
+    X_test_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
 
     # --- ÉTAPE 5.2: PRUNING OPTIONNEL DES FEATURES FORTEMENT CORRÉLÉES ---
     try:
@@ -342,6 +391,14 @@ def main():
             )
     except Exception as e:  # noqa: BLE001
         print(f"[PRUNING] Ignoré suite à une erreur non bloquante: {e}")
+
+    # pruning des features rares
+    X_train_processed_df, X_test_processed_df = prune_rare_binary_features(
+        X_train_processed_df,
+        X_test_processed_df,
+        RARE_EVENT_PRUNING_TRESHOLD,
+        ["ID", "CENTER_GROUP"],
+    )
 
     # --- ÉTAPE 6: SAUVEGARDE DES DONNÉES FINALES ET DES ARTEFACTS ---
     print("\n" + "=" * 50)

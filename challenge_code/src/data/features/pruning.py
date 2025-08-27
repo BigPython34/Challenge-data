@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Sequence, Tuple
-
+from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY
 import numpy as np
 import pandas as pd
 
@@ -215,3 +215,129 @@ __all__ = [
     "prune_highly_correlated_features_pair",
     "apply_pruning_to_processed_files",
 ]
+
+
+# -----------------
+# Redundancy cleanup
+# -----------------
+def _apply_redundancy_policy(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    policy = REDUNDANCY_POLICY or {}
+    drop_cols: List[str] = []
+
+    # Drop numeric sex encoding when one-hot is present
+    if policy.get("drop_sex_numeric_if_ohe", True):
+        if {"SEX_XX", "SEX_XY"}.issubset(
+            df.columns
+        ) and "sex_chromosomes" in df.columns:
+            drop_cols.append("sex_chromosomes")
+
+    # Drop *_count when *_altered exists
+    if policy.get("drop_count_when_binary_exists", True):
+        for c in df.columns:
+            if c.endswith("_count"):
+                alt = c.replace("_count", "_altered")
+                if alt in df.columns:
+                    drop_cols.append(c)
+    # Drop *_count when matching any_* exists
+    if policy.get("drop_count_when_any_exists", True):
+        for c in df.columns:
+            if c.endswith("_count"):
+                base = c[: -len("_count")]
+                # Keep COSMIC counts even if an any_ flag exists; these counts
+                # are valuable and should not be auto-dropped by the generic
+                # redundancy policy.
+                if base.startswith("cosmic_"):
+                    continue
+                any_col = f"any_{base}"
+                if any_col in df.columns:
+                    drop_cols.append(c)
+
+    # Prune missingness indicators except whitelisted
+    if policy.get("prune_missingness_indicators", True):
+        keep = set(MISSINGNESS_POLICY.get("keep_columns", []))
+        miss = [c for c in df.columns if c.endswith("_missing")]
+        for c in miss:
+            base = c[:-8]
+            if base not in keep:
+                drop_cols.append(c)
+
+    # Explicit drops
+    for c in policy.get("explicit_drop", []):
+        if c in df.columns:
+            drop_cols.append(c)
+
+    if drop_cols:
+        df = df.drop(columns=sorted(set(drop_cols)), errors="ignore")
+    return df
+
+
+def prune_rare_binary_features(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    threshold: float,
+    ignore_cols: List[str],
+) -> (pd.DataFrame, pd.DataFrame):
+    """
+    Identifie et supprime les features binaires rares des jeux d'entraînement et de test.
+    """
+    print("Démarrage du pruning des features binaires rares...")
+
+    # S'assurer que les dataframes sont des copies pour éviter les warnings
+    train_df_pruned = train_df.copy()
+    test_df_pruned = test_df.copy()
+
+    cols_to_prune = []
+
+    # Itérer sur toutes les colonnes du jeu d'entraînement
+    for col in train_df_pruned.columns:
+        if col in ignore_cols:
+            continue
+
+        # On ne s'intéresse qu'aux colonnes qui semblent binaires (0 ou 1)
+        # On tolère les floats (ex: 0.0, 1.0) et les NaNs
+        unique_vals = pd.unique(train_df_pruned[col].dropna())
+        is_binary = np.all(np.isin(unique_vals, [0, 1]))
+
+        if is_binary:
+            # Calculer la prévalence (fréquence de la valeur 1)
+            prevalence_train = train_df_pruned[col].mean()
+
+            # Vérifier aussi la prévalence dans le jeu de test si la colonne existe
+            prevalence_test = 0
+            if col in test_df_pruned.columns:
+                prevalence_test = test_df_pruned[col].mean()
+
+            # On supprime si la feature est rare DANS L'UN OU L'AUTRE des jeux
+            if prevalence_train < threshold or prevalence_test < threshold:
+                cols_to_prune.append(col)
+
+    if cols_to_prune:
+        print(
+            f"\n{len(cols_to_prune)} features rares identifiées pour suppression (prévalence < {threshold:.2%}):"
+        )
+        print(f"{cols_to_prune} will be supp")
+        # Afficher par groupes pour une meilleure lisibilité
+        groups = {}
+        for col in sorted(cols_to_prune):
+            prefix = col.split("_")[0]
+            if prefix not in groups:
+                groups[prefix] = []
+            groups[prefix].append(col)
+
+        for prefix, features in groups.items():
+            print(f"  - {prefix.upper()}: {features}")
+
+        # Supprimer les colonnes des deux dataframes
+        train_df_pruned.drop(columns=cols_to_prune, inplace=True, errors="ignore")
+        test_df_pruned.drop(columns=cols_to_prune, inplace=True, errors="ignore")
+
+        print(f"\nShape de X_train après pruning : {train_df_pruned.shape}")
+        print(f"Shape de X_test après pruning  : {test_df_pruned.shape}")
+    else:
+        print(
+            "\nAucune feature binaire rare n'a été trouvée. Aucune suppression nécessaire."
+        )
+
+    return train_df_pruned, test_df_pruned

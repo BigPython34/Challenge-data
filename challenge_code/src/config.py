@@ -49,46 +49,25 @@ MISSINGNESS_POLICY = {
     "drop_non_kept_indicators": True,
 }
 # ELN 2022 Cytogenetic Risk Classification
-# Based on ELN 2022 recommendations for cytogenetic risk stratification
+SPECIFIC_ABNORMALITIES_TO_FLAG = {
+    # Favorables
+    "has_t_8_21": r"t\s*\(\s*8\s*;\s*21\s*\)",
+    "has_inv_16_or_t_16_16": r"inv\s*\(\s*16\s*\)|t\s*\(\s*16\s*;\s*16\s*\)",
+    "has_t_15_17": r"t\s*\(\s*15\s*;\s*17\s*\)",
+    # Intermédiaires
+    "has_trisomy_8": r"\+\s*8\b",
+    "has_t_9_11": r"t\s*\(\s*9\s*;\s*11\s*\)",
+    "has_normal_karyotype": r"^\s*46\s*,\s*X[XY]\b(?!.)",  # Regex pour normal strict
+    # Défavorables
+    "has_mono_7_or_del_7q": r"-\s*7\b|del\s*\(\s*7\s*\)\s*\(q",
+    "has_mono_5_or_del_5q": r"-\s*5\b|del\s*\(\s*5\s*\)\s*\(q",
+    "has_abn_17p": r"del\s*\(\s*17\s*\)\s*\(p|i\s*\(\s*17\s*\)\s*\(q|17p-",
+    "has_rearr_3q": r"inv\s*\(\s*3\s*\)\s*\(q|t\s*\(\s*3\s*;\s*3\s*\)\s*\(q",
+    "has_t_6_9": r"t\s*\(\s*6\s*;\s*9\s*\)",
+    "has_t_9_22": r"t\s*\(\s*9\s*;\s*22\s*\)",
+}
 
-CYTOGENETIC_FAVORABLE = [
-    # Recherche "t(8;21)"
-    r"t\(8;21\)",
-    # Recherche "inv(16)" de manière robuste
-    r"inv\(16\)\(p",
-    # Recherche "t(16;16)" de manière robuste
-    r"t\(16;16\)\(p",
-    # Recherche "t(15;17)"
-    r"t\(15;17\)",
-]
 
-CYTOGENETIC_ADVERSE = [
-    # Monosomie 5 ou délétion du bras long 'q'
-    r"-5\b|del\(5\)\(q",
-    # Monosomie 7 ou délétion du bras long 'q'
-    r"-7\b|del\(7\)\(q",
-    # Délétion du bras court 'p' du chr 17, isochromosome 17q, ou notation 17p-
-    r"del\(17\)\(p|i\(17\)\(q|17p-",
-    # Monosomie 13 ou délétion du bras long 'q'
-    r"-13\b|del\(13\)\(q",
-    # Anomalies impliquant la bande 3q
-    r"inv\(3\)\(q|t\(3;3\)\(q",
-    # Translocation t(6;9)
-    r"t\(6;9\)",
-    # Translocation t(9;22)
-    r"t\(9;22\)",
-]
-
-CYTOGENETIC_INTERMEDIATE = [
-    # Caryotype normal strict
-    r"^46,X[XY](,|$|\s|\[)",
-    # Trisomie 8
-    r"\+8\b",
-    # Translocation t(9;11)
-    r"t\(9;11\)",
-    # Recherche générale d'anomalies de 11q23 (autres réarrangements KMT2A)
-    r"11q23",
-]
 # Complexity definition and ELN encoding controls
 COMPLEX_KARYOTYPE_MIN_ABNORMALITIES = 3
 ELN_CYTO_RISK_ENCODING = {
@@ -97,9 +76,8 @@ ELN_CYTO_RISK_ENCODING = {
     # Weights used only when encode_as == "ordinal"
     "weights": {"favorable": 0.0, "intermediate": 0.7, "adverse": 1.0},
 }
-
 # ELN 2022 Risk Classification Genes
-# Based on ELN 2022 recommendations for AML genetic risk stratification
+
 
 # Favorable prognosis genes
 FAVORABLE_GENES = [
@@ -237,13 +215,19 @@ CYTOGENETIC_COMMON_TRISOMIES = [
     r"\+9\b",
     r"\+20\b",
 ]
-
+CYTOGENETIC_SECONDARY_FLAGS = {
+    "has_monosomy_17": r"-\s*17\b",
+    "has_trisomy_21": r"\+\s*21\b",
+    "has_trisomy_11": r"\+\s*11\b",
+    "has_trisomy_13": r"\+\s*13\b",
+}
 # Toggle for including additional common cyto event features (binary flags)
 CYTO_FEATURE_TOGGLES = {
     # Master switch for additional cytogenetic features beyond core ELN rules
     "extended_features": True,
     # Add mono_X / tri_Y columns for common events (also enabled when extended_features is True)
-    "include_common_events": False,
+    "include_common_events": True,
+    "main_clone_analysis": True,
 }
 
 # Frequency-based gene filtering for molecular features
@@ -266,7 +250,7 @@ MOLECULAR_GENE_FREQ_FILTER = {
 
 # Molecular feature toggles and thresholds
 MOLECULAR_FEATURE_TOGGLES = {
-    "pathway_features": {"binary": True, "count": False},
+    "pathway_features": {"binary": True, "count": True},
     "burden": True,
 }
 TP53_HIGH_VAF_THRESHOLD = 0.55
@@ -287,7 +271,9 @@ ELN_MOLECULAR_RISK_ENCODING = {
 # Redundancy policy to prune overlapping or collinear features
 REDUNDANCY_POLICY = {
     # Drop *_count when *_altered exists (e.g., Tumor_suppressor_count vs Tumor_suppressor_altered)
-    "drop_count_when_binary_exists": True,
+    "drop_count_when_binary_exists": False,
+    # Also drop *_count when a matching any_* flag exists (e.g., foo_count vs any_foo)
+    "drop_count_when_any_exists": False,
     # Drop numeric sex encoding if one-hot is present
     "drop_sex_numeric_if_ohe": True,
     # Prune most *_missing except those explicitly kept in MISSINGNESS_POLICY.keep_columns
@@ -301,7 +287,7 @@ REDUNDANCY_POLICY = {
         # "any_cosmic_has_translocation_common",
     ],
 }
-
+RARE_EVENT_PRUNING_TRESHOLD = 0.005
 # Cap for total number of cyto abnormalities when computing derived features
 COMPLEX_ABNORMALITIES_CAP = 12
 
@@ -314,7 +300,7 @@ PREPROCESSING = {
     "knn": {"n_neighbors": 4},
     # Iterative imputer parameters (for documentation/traceability)
     "iterative": {
-        "max_iter": 300,
+        "max_iter": 350,
         "estimator": "RandomForest",
         "estimator_n_estimators": 70,
         "random_state": SEED,
@@ -385,16 +371,6 @@ RSF_PARAMS = {
 
 
 GRADIENT_BOOSTING_PARAMS = {
-    "n_estimators": 500,  # Plus d'arbres car le learning_rate est faible.
-    "learning_rate": 0.05,  # Un taux d'apprentissage plus faible est plus robuste.
-    "max_depth": 3,  # RÈGLE D'OR : Garder les arbres très simples.
-    "subsample": 0.7,  # Régularisation forte : chaque arbre ne voit que 70% des données.
-    "min_samples_leaf": 20,  # Régularisation forte.
-    "min_samples_split": 40,  # Régularisation forte.
-    "loss": "coxph",  # La loss par défaut, très performante.
-}
-
-GRADIENT_BOOSTING_PARAMS = {
     "n_estimators": 500,
     "learning_rate": 0.05,
     "max_depth": 3,
@@ -452,4 +428,48 @@ PYCOX_DEEPSURV_PARAMS = {
     "lr_scheduler": True,  # Learning rate scheduler
     "lr_factor": 0.5,  # LR reduction factor
     "lr_patience": 50,  # Patience for scheduler
+}
+
+# ----------------------
+# External + Molecular FE
+# ----------------------
+# Controls for using external variant-level scores (e.g., CADD via myvariant.info)
+MOLECULAR_EXTERNAL_SCORES = {
+    "cadd": {
+        "enabled": True,  # Network call; keep off by default for safety
+        "snv_only": True,  # Query only SNVs (REF/ALT length == 1)
+        "high_threshold": 20.0,  # CADD PHRED >= 20 usually considered deleterious
+        # Aggregate patient-level features to compute from variant scores
+        "features": ["max", "mean", "high_count"],
+        # When running 1_prepare_data, should we proactively fetch scores?
+        # Set to False to avoid re-downloading on every run (use existing cache only).
+        "prefetch_on_prepare": False,
+    },
+    # Control MyVariant cache warm-up from 1_prepare_data
+    "myvariant": {
+        # Set to False to skip contacting the API during prepare; cache will be used as-is.
+        "prefetch_on_prepare": False,
+    },
+}
+
+# How to exploit COSMIC tiers at patient-level
+COSMIC_TIER_FEATURES = {
+    "enabled": True,  # Safe, no network
+    # Count mutated genes per COSMIC tier (tier1_gene_count, tier2_gene_count, ...)
+    "counts_by_tier": True,
+    # Keep NaN for patients with no COSMIC-tiered genes; add an explicit indicator
+    "keep_min_tier_na": True,
+    "add_has_cosmic_tier": True,
+}
+
+# Driver-like features that match gene role and observed mutation effect
+DRIVER_LIKE_FEATURES = {
+    "enabled": True,
+}
+
+# Cross cytogenetic and molecular genomic location (using COSMIC chr band/arm)
+CYTO_MOLECULAR_CROSS = {
+    "enabled": True,
+    # Arms of interest to cross with canonical adverse deletions/monosomies
+    "arms": ["5q", "7q", "17p"],
 }

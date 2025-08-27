@@ -122,7 +122,7 @@ def analyze_feature_correlations(data_path: str, threshold: float = 0.6):
 
 if __name__ == "__main__":
     # Spécifiez ici le chemin vers le fichier que vous voulez analyser
-    TRAIN_DATA_PATH = "datasets_processed/X_test_processed.csv"
+    TRAIN_DATA_PATH = "datasets_processed/X_train_processed.csv"
     analyze_feature_correlations(data_path=TRAIN_DATA_PATH)
     TEST_DATA_PATH = "datasets_processed/X_test_processed.csv"
     analyze_feature_correlations(data_path=TEST_DATA_PATH)

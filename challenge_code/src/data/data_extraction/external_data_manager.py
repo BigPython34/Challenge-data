@@ -1,10 +1,12 @@
 import json
 import time
-from typing import Dict
+import os
+from typing import Dict, Set, Optional
 
 import numpy as np
 import pandas as pd
 import requests
+from .myvariant_cleaner import MyVariantCleaner
 
 
 class ExternalDataManager:
@@ -21,6 +23,12 @@ class ExternalDataManager:
         self.gene_info_data = self._combine_gene_info(cosmic_info, oncokb_info)
         self.variant_cache_path = variant_cache_path
         self.variant_scores = self._load_variant_cache()
+        # MyVariant annotation cache (JSONL raw + cleaned)
+        self.myvariant_raw_path = os.path.join("datas", "variant_data.jsonl")
+        self.myvariant_cleaned_path = os.path.join("datas", "variant_data_bis.jsonl")
+        self.variant_annotations: Dict[str, dict] = self._load_myvariant_cleaned(
+            self.myvariant_cleaned_path
+        )
 
     # ---------------- COSMIC -----------------
     def _load_cosmic(self, path: str) -> pd.DataFrame:
@@ -48,6 +56,8 @@ class ExternalDataManager:
             "SOMATIC": "SOMATIC",
             "GERMLINE": "GERMLINE",
             "TUMOUR_TYPES_SOMATIC": "TUMOUR_TYPES_SOMATIC",
+            "CHR_BAND": "CHR_BAND",
+            "CHROMOSOME": "CHROMOSOME",
         }
         present = {k: v for k, v in keep.items() if k in df.columns}
         df = df[list(present.keys())].rename(columns=present)
@@ -145,10 +155,28 @@ class ExternalDataManager:
             "cosmic_in_leukemia_lymphoma",
         ]
         grouped = df.groupby("GENE")[agg_cols].max()
+        # Keep minimum tier and earliest non-null chr band for gene
         if "TIER" in df.columns:
             grouped = grouped.join(
                 df.groupby("GENE")["TIER"].min().rename("cosmic_tier_min")
             )
+        # Chromosome band/arm mapping (first non-null per gene)
+        if "CHR_BAND" in df.columns:
+            band_first = (
+                df.assign(CHR_BAND=df["CHR_BAND"].replace({"": np.nan}))
+                .groupby("GENE")["CHR_BAND"]
+                .first()
+                .rename("cosmic_chr_band")
+            )
+            grouped = grouped.join(band_first)
+        if "CHROMOSOME" in df.columns:
+            chrom_first = (
+                df.assign(CHROMOSOME=df["CHROMOSOME"].replace({"": np.nan}))
+                .groupby("GENE")["CHROMOSOME"]
+                .first()
+                .rename("cosmic_chromosome")
+            )
+            grouped = grouped.join(chrom_first)
         for c in agg_cols:
             grouped[c] = grouped[c].fillna(0).astype(int)
         print(f"   -> {len(grouped)} gènes traités depuis COSMIC.")
@@ -197,6 +225,14 @@ class ExternalDataManager:
             return pd.to_numeric(x, errors="coerce").max()
 
         out = combined.groupby(level=0).agg(agg_fun)
+        # Derive chromosome arm from COSMIC band if available (e.g., 5q31 -> 5q)
+        if "cosmic_chr_band" in out.columns:
+            arm = (
+                out["cosmic_chr_band"]
+                .astype(str)
+                .str.extract(r"^([0-9XY]+[pq])", expand=False)
+            )
+            out["cosmic_chr_arm"] = arm
         for c in out.columns:
             if c == "cosmic_tier_min":
                 continue
@@ -223,11 +259,43 @@ class ExternalDataManager:
 
     def fetch_and_cache_cadd_scores(self, variants_df: pd.DataFrame) -> None:
         print("[ExternalData] Récupération des scores de pathogénicité (CADD)...")
-        variants_df["hgv_id"] = variants_df.apply(
+        required = {"CHR", "START", "REF", "ALT"}
+        if not required.issubset(variants_df.columns):
+            print(
+                "   [INFO] Colonnes requises manquantes pour CADD, préchargement ignoré."
+            )
+            return
+
+        df = variants_df[list(required)].copy()
+        # Coerce types and sanitize
+        df["START"] = pd.to_numeric(df["START"], errors="coerce")
+        df["CHR"] = (
+            df["CHR"].astype(str).str.replace(r"^chr", "", regex=True).str.strip()
+        )
+        df["REF"] = df["REF"].astype(str).str.strip()
+        df["ALT"] = df["ALT"].astype(str).str.strip()
+        # SNV-only: single-letter REF/ALT
+        snv_mask = (df["REF"].str.len() == 1) & (df["ALT"].str.len() == 1)
+        df = df.loc[snv_mask]
+        df = df.dropna(subset=["CHR", "START", "REF", "ALT"])
+        if df.empty:
+            print("   [INFO] Aucun variant SNV valide à précharger pour CADD.")
+            return
+        df["hgv_id"] = df.apply(
             lambda r: f"chr{r['CHR']}:g.{int(r['START'])}{r['REF']}>{r['ALT']}", axis=1
         )
-        unique_variants = variants_df["hgv_id"].unique()
-        to_fetch = [v for v in unique_variants if v not in self.variant_scores]
+        unique_variants = df["hgv_id"].dropna().unique()
+
+        def _needs_fetch(key: str) -> bool:
+            if key not in self.variant_scores:
+                return True
+            val = self.variant_scores.get(key)
+            try:
+                return val is None or (isinstance(val, float) and np.isnan(val))
+            except Exception:
+                return True
+
+        to_fetch = [v for v in unique_variants if _needs_fetch(v)]
         if not to_fetch:
             print("   -> Tous les scores de variants sont déjà en cache.")
             return
@@ -238,7 +306,11 @@ class ExternalDataManager:
             try:
                 res = requests.post(
                     "https://myvariant.info/v1/variant",
-                    data={"ids": ",".join(batch), "fields": "dbnsfp.cadd.phred"},
+                    data={
+                        "ids": ",".join(batch),
+                        "fields": "cadd.phred,dbnsfp.cadd.phred",
+                        "assembly": "hg38",
+                    },
                     headers=headers,
                     timeout=30,
                 )
@@ -246,9 +318,20 @@ class ExternalDataManager:
                 results = res.json()
                 for result in results:
                     query = result.get("query")
-                    score = (
-                        result.get("dbnsfp", {}).get("cadd", {}).get("phred", np.nan)
-                    )
+                    # prefer top-level cadd.phred (if available), else fallback to dbnsfp.cadd.phred
+                    score = None
+                    if isinstance(result, dict):
+                        cadd = result.get("cadd")
+                        if isinstance(cadd, dict):
+                            score = cadd.get("phred", score)
+                        if score is None:
+                            dbnsfp = result.get("dbnsfp")
+                            if isinstance(dbnsfp, dict):
+                                cadd2 = dbnsfp.get("cadd")
+                                if isinstance(cadd2, dict):
+                                    score = cadd2.get("phred", score)
+                    if score is None:
+                        score = np.nan
                     if query is not None:
                         self.variant_scores[query] = score
                 time.sleep(1)
@@ -261,3 +344,129 @@ class ExternalDataManager:
 
     def get_variant_scores(self) -> Dict[str, float]:
         return self.variant_scores
+
+    # --------------- MyVariant annotations (snpeff/vcf) -----------
+    def _load_myvariant_cleaned(self, cleaned_path: str) -> Dict[str, dict]:
+        annotations: Dict[str, dict] = {}
+        try:
+            with open(cleaned_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        if isinstance(obj, dict) and len(obj) == 1:
+                            vid, data = next(iter(obj.items()))
+                            annotations[vid] = data
+                    except json.JSONDecodeError:
+                        continue
+        except FileNotFoundError:
+            pass
+        return annotations
+
+    @staticmethod
+    def _build_variant_ids_from_df(df: pd.DataFrame, snv_only: bool = True) -> Set[str]:
+        required = {"CHR", "START", "REF", "ALT"}
+        if not required.issubset(df.columns):
+            return set()
+        tmp = df[list(required)].copy()
+        tmp["START"] = pd.to_numeric(tmp["START"], errors="coerce")
+        tmp["CHR"] = (
+            tmp["CHR"].astype(str).str.replace(r"^chr", "", regex=True).str.strip()
+        )
+        tmp["REF"] = tmp["REF"].astype(str).str.strip()
+        tmp["ALT"] = tmp["ALT"].astype(str).str.strip()
+        if snv_only:
+            snv_mask = (tmp["REF"].str.len() == 1) & (tmp["ALT"].str.len() == 1)
+            tmp = tmp.loc[snv_mask]
+        tmp = tmp.dropna(subset=["CHR", "START", "REF", "ALT"])
+        if tmp.empty:
+            return set()
+        vids = (
+            tmp.apply(
+                lambda r: f"chr{r['CHR']}:g.{int(r['START'])}{r['REF']}>{r['ALT']}",
+                axis=1,
+            )
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        return set(vids)
+
+    def _fetch_myvariant_to_file_sync(
+        self, variant_ids: Set[str], output_path: str
+    ) -> None:
+        """Fetch MyVariant snpeff/vcf annotations using batch POST requests and write JSONL of {vid: payload}."""
+        ids = list(variant_ids)
+        with open(output_path, "w", encoding="utf-8") as f:
+            for i in range(0, len(ids), 1000):
+                batch = ids[i : i + 1000]
+                try:
+                    res = requests.post(
+                        "https://myvariant.info/v1/variant",
+                        data={"ids": ",".join(batch), "fields": "snpeff,vcf"},
+                        headers={"content-type": "application/x-www-form-urlencoded"},
+                        timeout=60,
+                    )
+                    res.raise_for_status()
+                    results = res.json()
+                    for item in results:
+                        vid = item.get("query")
+                        if vid:
+                            f.write(json.dumps({vid: item}, ensure_ascii=False) + "\n")
+                except requests.exceptions.RequestException as e:
+                    print(f"  [ERREUR API] MyVariant lot {i//1000 + 1}: {e}")
+
+    def ensure_myvariant_cache_for_df(
+        self,
+        variants_df: pd.DataFrame,
+        snv_only: bool = True,
+        batch_temp_path: Optional[str] = None,
+    ) -> None:
+        """Ensure MyVariant annotations JSONL cache contains all variants from df (skip those already cached)."""
+        vids = self._build_variant_ids_from_df(variants_df, snv_only=snv_only)
+        if not vids:
+            print("[ExternalData] Aucun variant valide trouvé pour MyVariant.")
+            return
+        cached = set(self.variant_annotations.keys())
+        to_fetch = list(vids - cached)
+        if not to_fetch:
+            print(
+                "[ExternalData] Toutes les annotations MyVariant sont déjà en cache (cleaned)."
+            )
+            return
+        # Prepare paths
+        os.makedirs(os.path.dirname(self.myvariant_raw_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.myvariant_cleaned_path), exist_ok=True)
+        # Fetch only missing into a temp file to avoid rewriting existing raw
+        tmp_out = batch_temp_path or (self.myvariant_raw_path + ".tmp")
+        print(
+            f"[ExternalData] Téléchargement MyVariant pour {len(to_fetch)} variants manquants..."
+        )
+        self._fetch_myvariant_to_file_sync(set(to_fetch), tmp_out)
+        # Append to main raw jsonl and remove temp
+        with open(self.myvariant_raw_path, "a", encoding="utf-8") as dst:
+            try:
+                with open(tmp_out, "r", encoding="utf-8") as src:
+                    for line in src:
+                        if line.strip():
+                            dst.write(line)
+            finally:
+                try:
+                    os.remove(tmp_out)
+                except OSError:
+                    pass
+        # Clean entire raw into cleaned JSONL (idempotent)
+        cleaner = MyVariantCleaner()
+        cleaner.process_raw_jsonl(self.myvariant_raw_path, self.myvariant_cleaned_path)
+        # Reload cleaned cache into memory
+        self.variant_annotations = self._load_myvariant_cleaned(
+            self.myvariant_cleaned_path
+        )
+        print(
+            f"[ExternalData] Cache MyVariant prêt ({len(self.variant_annotations)} variants nettoyés)."
+        )
+
+    def get_variant_annotations(self) -> Dict[str, dict]:
+        return self.variant_annotations

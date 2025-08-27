@@ -28,7 +28,8 @@ def main():
     except FileNotFoundError as e:
         print(f"   [ERROR] {e}")
         return
-
+    if "CENTER_GROUP" in X.columns:
+        X = X.drop(columns=["CENTER_GROUP"])
     # --- 2. DEFINE SEARCH SPACES ---
     # Define here which parameters to test for each model
 
