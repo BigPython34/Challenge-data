@@ -386,16 +386,13 @@ COX_PARAMS = {
     "n_iter": 100,  # Plus d'itérations pour assurer la convergence.
 }
 
-# --- CoxNet (Cox avec régularisation ElasticNet) ---
-# TRÈS INTÉRESSANT dans votre cas car il fait de la sélection de features.
+
 COXNET_PARAMS = {
     "l1_ratio": 0.95,  # Privilégier fortement le Lasso (L1) pour mettre à zéro les features inutiles.
     "n_alphas": 100,  # Laisse scikit-survival trouver le meilleur alpha.
     "max_iter": 20000,  # Augmenter significativement pour garantir la convergence.
 }
 
-# --- Extra Survival Trees ---
-# Alternative au RSF, parfois plus robuste.
 EXTRA_TREES_PARAMS = {
     "n_estimators": 400,
     "max_depth": 15,

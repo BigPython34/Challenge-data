@@ -1,0 +1,8 @@
+{
+  "chosen_models": [
+    "GradientBoosting",
+    "RSF"
+  ],
+  "timestamp": "20250912_182333",
+  "result":0.7645145211273325
+}
