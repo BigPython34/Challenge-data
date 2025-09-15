@@ -56,7 +56,6 @@ class MolecularFeatureExtraction:
         maf_df: pd.DataFrame,
         important_genes: Optional[List[str]] = None,
     ) -> pd.DataFrame:
-        # Note: La logique de filtrage est maintenant gérée dans `create_all_molecular_features`
         important_genes = important_genes or ALL_IMPORTANT_GENES
 
         if df is None or df.empty:
@@ -153,9 +152,7 @@ class MolecularFeatureExtraction:
         maf[vaf_col] = pd.to_numeric(maf[vaf_col], errors="coerce")
 
         vaf_thresholds = dict(MOLECULAR_VAF_THRESHOLDS)
-        vaf_thresholds["TP53"] = TP53_HIGH_VAF_THRESHOLD
-
-        # Ne traiter que les gènes qui ont des règles ET qui sont dans la liste filtrée
+        
         genes_to_process = [gene for gene in vaf_thresholds if gene in important_genes]
 
         for gene in genes_to_process:

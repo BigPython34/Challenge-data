@@ -11,6 +11,7 @@ from ...config import (
     MISSINGNESS_POLICY,
     CREATE_LOG_COLUMNS,
     COMPLEX_KARYOTYPE_MIN_ABNORMALITIES,
+    SPECIFIC_ABNORMALITIES_TO_FLAG
 )
 from .pruning import _apply_redundancy_policy
 
@@ -349,17 +350,7 @@ class CytogeneticFeatureExtraction:
         result_df["SEX_XY"] = (result_df["sex_chromosomes"] == 1).astype(int)
         result_df["SEX_UNKNOWN"] = result_df["sex_chromosomes"].isna().astype(int)
 
-        SPECIFIC_ABNORMALITIES_TO_FLAG = {
-            "trisomy_8": r"\+\s*8(?![0-9])|\btris(omy|omia)?\s*8(?![0-9])",
-            "t_9_11": r"t\s*\(\s*9\s*;\s*11\s*\)",
-            "minus_Y": r"\bminus_y\b|-\s*y(?![a-zA-Z0-9])|\bdely\b",
-            "plus_21": r"\+\s*21(?![0-9])|\btris(omy|omia)?\s*21(?![0-9])",
-            "del_5q_or_mono5": r"-\s*5(?![0-9])|\b(mono|del)\w*\s*5|\bdel\s*\(\s*5\s*\)\s*\(q",
-            "monosomy_7_or_del7q": r"-\s*7(?![0-9])|\b(mono|del)\w*\s*7|\bdel\s*\(\s*7\s*\)\s*\(q",
-            "del_17p_or_i17q": r"del\s*\(\s*17\s*\)\s*\(p|i\s*\(\s*17\s*\)\s*\(q|17p-",
-            "rearr_3q26": r"inv\(3\).*q26|t\(3;.*\).*q26|t\(.*;3\).*q26",
-            "del_12p": r"del\s*\(\s*12\s*\)\s*\(p",
-        }
+        
         for name, pattern in SPECIFIC_ABNORMALITIES_TO_FLAG.items():
             result_df[name] = cyto_string_series.str.contains(
                 pattern, case=False, na=False, regex=True
