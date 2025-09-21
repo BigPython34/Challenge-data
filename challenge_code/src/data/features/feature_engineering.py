@@ -13,7 +13,7 @@ from .clinical_feature_engineering import (
 )
 from .molecular_feature_engineering import MolecularFeatureExtraction
 from .pruning import _apply_redundancy_policy
-from ...config import CYTO_MOLECULAR_CROSS
+from ...config import CYTO_MOLECULAR_CROSS, FEATURE_INTERACTIONS, ID_COLUMNS
 
 
 class IntegratedFeatureEngineering:
@@ -46,12 +46,11 @@ class IntegratedFeatureEngineering:
             )
         # Optional cross of cyto deletions and mutated arms
         if CYTO_MOLECULAR_CROSS.get("enabled", False):
-            cross_specs = [
-                ("5q", "del_5q_or_mono5", "mut_in_5q_and_del5q"),
-                ("7q", "monosomy_7_or_del7q", "mut_in_7q_and_del7q"),
-                ("17p", "del_17p_or_i17q", "mut_in_17p_and_del17p"),
-            ]
-            for arm, cyto_col, out_col in cross_specs:
+            cross_specs = CYTO_MOLECULAR_CROSS.get("specs", [])
+            for spec in cross_specs:
+                arm = spec["arm"]
+                cyto_col = spec["cyto_col"]
+                out_col = spec["out_col"]
                 mut_col = f"mutated_arm_{arm}"
                 if mut_col in final_df.columns and cyto_col in final_df.columns:
                     final_df[out_col] = (
@@ -99,62 +98,52 @@ class CytoMolecularInteractionFeatures:
 
     @staticmethod
     def create_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Point d'entrée principal. Ajoute toutes les features d'interaction au dataframe.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Le dataframe contenant déjà TOUTES les features cliniques,
-            cytogénétiques et moléculaires.
-
-        Returns
-        -------
-        pd.DataFrame
-            Le dataframe enrichi avec les nouvelles colonnes d'interaction.
-        """
-        if df.empty:
+        if df.empty or not FEATURE_INTERACTIONS.get("enabled", False):
             return df
 
         df_out = df.copy()
-
         print("[FE Inter] Création des features d'interaction cyto-moléculaires...")
-
+        
         # --- Interaction 1 : Caryotype Normal stratifié par le profil moléculaire ---
-        if "normal_karyotype" in df_out.columns:
-            # Cas favorable : caryotype normal AVEC mutation NPM1 (sans FLT3-ITD) OU CEBPA biallélique
-            # C'est un signal très fort de bon pronostic.
-            is_good_mol = (
-                (df_out.get("mut_NPM1", 0) == 1) & (df_out.get("FLT3_ITD", 0) == 0)
-            ) | (df_out.get("CEBPA_biallelic", 0) == 1)
+        config_fav = FEATURE_INTERACTIONS.get("cyto_normal_mol_favorable", {})
+        if config_fav.get("enabled") and config_fav.get("base_col") in df_out.columns:
+            base_col = config_fav["base_col"]
+            good_mol_cols = [c for c in config_fav.get("good_mol_cols", []) if c in df_out.columns]
+            bad_mol_cols = [c for c in config_fav.get("bad_mol_cols_for_good", []) if c in df_out.columns]
+            
+            is_good_mol = pd.Series(False, index=df_out.index)
+            if good_mol_cols:
+                is_good_mol = (df_out[good_mol_cols].sum(axis=1) > 0)
+            
+            if bad_mol_cols:
+                is_good_mol &= (df_out[bad_mol_cols].sum(axis=1) == 0)
 
-            df_out["cyto_normal_mol_favorable"] = (
-                (df_out["normal_karyotype"] == 1) & (is_good_mol)
-            ).astype(int)
+            df_out["cyto_normal_mol_favorable"] = ((df_out[base_col] == 1) & is_good_mol).astype(int)
 
-            # Cas défavorable : caryotype normal AVEC FLT3-ITD à haute charge allélique
-            # C'est un signal très fort de mauvais pronostic.
-            is_bad_mol = (
-                df_out.get("FLT3_ITD", 0) == 1
-            )  # On peut aussi utiliser FLT3_high_VAF si disponible
+        # --- Interaction 2 : Caryotype normal AVEC mutation adverse ---
+        config_adv = FEATURE_INTERACTIONS.get("cyto_normal_mol_adverse", {})
+        if config_adv.get("enabled") and config_adv.get("base_col") in df_out.columns:
+            base_col = config_adv["base_col"]
+            adverse_cols = [c for c in config_adv.get("adverse_mol_cols", []) if c in df_out.columns]
+            if adverse_cols:
+                is_bad_mol = (df_out[adverse_cols].sum(axis=1) > 0)
+                df_out["cyto_normal_mol_adverse"] = ((df_out[base_col] == 1) & is_bad_mol).astype(int)
 
-            df_out["cyto_normal_mol_adverse"] = (
-                (df_out["normal_karyotype"] == 1) & (is_bad_mol)
-            ).astype(int)
+        # --- Interaction 3 : Caryotype Favorable "annulé" par une mutation défavorable ---
+        config_kit = FEATURE_INTERACTIONS.get("cyto_favorable_mol_adverse_kit", {})
+        if config_kit.get("enabled") and config_kit.get("base_col") in df_out.columns:
+            base_col = config_kit["base_col"]
+            adverse_cols = [c for c in config_kit.get("adverse_mol_cols", []) if c in df_out.columns]
+            if adverse_cols:
+                 df_out["cyto_favorable_mol_adverse_kit"] = ((df_out[base_col] == 1) & (df_out[adverse_cols].sum(axis=1) > 0)).astype(int)
 
-        # --- Interaction 2 : Caryotype Favorable "annulé" par une mutation défavorable ---
-        if "any_favorable_cyto" in df_out.columns and "mut_KIT" in df_out.columns:
-            # Cas où un bon caryotype (CBF-AML) est contrebalancé par une mutation de KIT.
-            df_out["cyto_favorable_mol_adverse_kit"] = (
-                (df_out["any_favorable_cyto"] == 1) & (df_out.get("mut_KIT", 0) == 1)
-            ).astype(int)
-
-        # --- Interaction 3 : La "double-peine" -> Caryotype Complexe ET mutation TP53 ---
-        if "complex_karyotype" in df_out.columns and "mut_TP53" in df_out.columns:
-            # C'est l'un des pires scénarios pronostiques possibles.
-            df_out["cyto_complex_and_mol_tp53"] = (
-                (df_out["complex_karyotype"] == 1) & (df_out.get("mut_TP53", 0) == 1)
-            ).astype(int)
+        # --- Interaction 4 : La "double-peine" -> Caryotype Complexe ET mutation TP53 ---
+        config_tp53 = FEATURE_INTERACTIONS.get("cyto_complex_and_mol_tp53", {})
+        if config_tp53.get("enabled") and config_tp53.get("base_col") in df_out.columns:
+            base_col = config_tp53["base_col"]
+            adverse_cols = [c for c in config_tp53.get("adverse_mol_cols", []) if c in df_out.columns]
+            if adverse_cols:
+                df_out["cyto_complex_and_mol_tp53"] = ((df_out[base_col] == 1) & (df_out[adverse_cols].sum(axis=1) > 0)).astype(int)
 
         print(
             f"[FE Inter] {len(df_out.columns) - len(df.columns)} features d'interaction ajoutées."

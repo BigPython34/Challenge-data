@@ -3,6 +3,8 @@
     "keep_monocyte_indicator": false,
     "model_family": "rsf",
     "name": "baseline_supervised_mono",
+    "prune_feature": false,
+    "prune_feature_threshold": 0.9,
     "random_seed": 42,
     "use_center_ohe": false,
     "use_monocyte_supervised": true
@@ -12,11 +14,15 @@
       "lower": 0.01,
       "upper": 0.99
     },
+    "drop_zero_variance": true,
     "imputer": "iterative",
     "iterative": {
+      "HistGradientBoosting": {
+        "max_iter": 50
+      },
       "estimator": "RandomForest",
-      "estimator_n_estimators": 40,
-      "max_iter": 70,
+      "estimator_n_estimators": 120,
+      "max_iter": 200,
       "random_state": 42
     },
     "knn": {
@@ -24,7 +30,7 @@
     },
     "monocyte_imputer": {
       "clip_to_wbc": true,
-      "model_path": "C:\\Users\\octave.cercle\\Desktop\\Challenge_data\\challenge_code\\models\\monocyte_imputer.joblib",
+      "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
       "predictors": {
         "cat": [
           "CENTER"

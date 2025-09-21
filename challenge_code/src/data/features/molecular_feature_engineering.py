@@ -3,17 +3,19 @@
 import pandas as pd
 from ...config import (
     ALL_IMPORTANT_GENES,
-    ADVERSE_GENES,  # Assurez-vous d'importer cette liste
+    ADVERSE_GENES,
     GENE_PATHWAYS,
     MOLECULAR_FEATURE_TOGGLES,
     ELN_MOLECULAR_RISK_ENCODING,
-    TP53_HIGH_VAF_THRESHOLD,
     MOLECULAR_VAF_THRESHOLDS,
     MOLECULAR_GENE_FREQ_FILTER,
     MOLECULAR_EXTERNAL_SCORES,
     COSMIC_TIER_FEATURES,
     DRIVER_LIKE_FEATURES,
     CYTO_MOLECULAR_CROSS,
+    MOLECULAR_INPUT_COLUMNS,
+    MUTATION_TYPE_PATTERNS,
+    COMUTATION_PATTERNS
 )
 from src.data.data_extraction.external_data_manager import ExternalDataManager
 from typing import Optional, List
@@ -37,9 +39,10 @@ class MolecularFeatureExtraction:
             return ALL_IMPORTANT_GENES
 
         min_total = int(config.get("min_total_count", 5))
+        gene_col = MOLECULAR_INPUT_COLUMNS.get("gene", "GENE")
 
-        train_counts = train_maf["GENE"].value_counts()
-        test_counts = test_maf["GENE"].value_counts()
+        train_counts = train_maf[gene_col].value_counts()
+        test_counts = test_maf[gene_col].value_counts()
         total_counts = train_counts.add(test_counts, fill_value=0)
 
         keep = set(total_counts[total_counts >= min_total].index)
@@ -100,7 +103,6 @@ class MolecularFeatureExtraction:
 
     @staticmethod
     def _extract_binary_mutations(molecular_df, maf_df, important_genes):
-        # VOTRE CODE ORIGINAL EST CONSERVÉ
         if molecular_df is None or molecular_df.empty:
             return molecular_df
         molecular_df["ID"] = molecular_df["ID"].astype(str)
@@ -108,13 +110,13 @@ class MolecularFeatureExtraction:
             for gene in important_genes:
                 molecular_df[f"mut_{gene}"] = 0
             return molecular_df
-        gene_col = next(
-            (c for c in ["GENE", "Hugo_Symbol"] if c in maf_df.columns), None
-        )
-        if gene_col is None:
+        
+        gene_col = MOLECULAR_INPUT_COLUMNS.get("gene", "GENE")
+        if gene_col not in maf_df.columns:
             for gene in important_genes:
                 molecular_df[f"mut_{gene}"] = 0
             return molecular_df
+            
         maf = maf_df.copy()
         maf["ID"] = maf["ID"].astype(str)
         piv = (
@@ -139,41 +141,40 @@ class MolecularFeatureExtraction:
     def _extract_vaf_features(
         molecular_df: pd.DataFrame, maf_df: pd.DataFrame, important_genes: List[str]
     ) -> pd.DataFrame:
-        """MODIFIÉE : Utilise `important_genes` pour ne traiter que les gènes pertinents."""
         if maf_df is None or maf_df.empty:
             return molecular_df
         maf = maf_df.copy()
         maf["ID"] = maf["ID"].astype(str)
-        vaf_col = next(
-            (c for c in ["VAF", "Variant_Allele_Frequency"] if c in maf.columns), None
-        )
-        if vaf_col is None:
+        
+        vaf_col = MOLECULAR_INPUT_COLUMNS.get("vaf", "VAF")
+        gene_col = MOLECULAR_INPUT_COLUMNS.get("gene", "GENE")
+        effect_col = MOLECULAR_INPUT_COLUMNS.get("effect", "EFFECT")
+
+        if vaf_col not in maf.columns or gene_col not in maf.columns:
             return molecular_df
+            
         maf[vaf_col] = pd.to_numeric(maf[vaf_col], errors="coerce")
 
         vaf_thresholds = dict(MOLECULAR_VAF_THRESHOLDS)
-        
         genes_to_process = [gene for gene in vaf_thresholds if gene in important_genes]
 
         for gene in genes_to_process:
-            gene_rows = maf[maf["GENE"] == gene]
+            gene_rows = maf[maf[gene_col] == gene]
             if not gene_rows.empty:
                 max_vaf = gene_rows.groupby("ID")[vaf_col].max()
-                molecular_df[f"vaf_max_{gene}"] = (
-                    molecular_df["ID"].map(max_vaf).fillna(0.0)
-                )
+                molecular_df[f"vaf_max_{gene}"] = molecular_df["ID"].map(max_vaf).fillna(0.0)
 
                 thr = vaf_thresholds[gene]
                 high = molecular_df[f"vaf_max_{gene}"] >= thr
 
-                if gene == "FLT3":
+                # Logique spécifique pour FLT3-ITD
+                if gene == "FLT3" and effect_col in gene_rows.columns:
+                    itd_pattern = MUTATION_TYPE_PATTERNS.get("FLT3_ITD", {}).get("pattern", "ITD|internal tandem duplication")
                     itd_ids = set(
                         gene_rows[
-                            gene_rows["EFFECT"]
+                            gene_rows[effect_col]
                             .astype(str)
-                            .str.contains(
-                                "ITD|internal tandem duplication", case=False, na=False
-                            )
+                            .str.contains(itd_pattern, case=False, na=False)
                         ]["ID"]
                     )
                     high |= molecular_df["ID"].isin(itd_ids)
@@ -188,108 +189,86 @@ class MolecularFeatureExtraction:
     def _extract_mutation_types(
         molecular_df: pd.DataFrame, maf_df: pd.DataFrame
     ) -> pd.DataFrame:
-        # VOTRE CODE ORIGINAL EST CONSERVÉ INTÉGRALEMENT
-        if "TP53" in maf_df["GENE"].values:
-            tp53_patients = maf_df[maf_df["GENE"] == "TP53"]
-            truncating_pattern = r"nonsense|frameshift|splice_site|stop_gained"
-            tp53_truncating_ids = tp53_patients[
-                tp53_patients["EFFECT"]
-                .astype(str)
-                .str.contains(truncating_pattern, case=False, na=False)
-            ]["ID"].unique()
-            molecular_df["TP53_truncating"] = (
-                molecular_df["ID"].astype(str).isin(tp53_truncating_ids).astype(int)
-            )
-        else:
-            molecular_df["TP53_truncating"] = 0
-        if "CEBPA" in maf_df["GENE"].values:
-            cebpa_counts = maf_df[maf_df["GENE"] == "CEBPA"]["ID"].value_counts()
-            biallelic_ids = cebpa_counts[cebpa_counts >= 2].index
-            molecular_df["CEBPA_biallelic"] = (
-                molecular_df["ID"].astype(str).isin(biallelic_ids).astype(int)
-            )
-        else:
-            molecular_df["CEBPA_biallelic"] = 0
-        if "FLT3" in maf_df["GENE"].values:
-            flt3_rows = maf_df[maf_df["GENE"] == "FLT3"]
-            itd_ids = set(
-                flt3_rows[
-                    flt3_rows["EFFECT"]
-                    .astype(str)
-                    .str.contains(
-                        r"ITD|internal tandem duplication", case=False, na=False
-                    )
-                ]["ID"]
-            )
-            tkd_ids = set(
-                flt3_rows[
-                    flt3_rows["PROTEIN_CHANGE"]
-                    .astype(str)
-                    .str.contains(r"D835|I836", case=False, na=False)
-                ]["ID"]
-            )
-            molecular_df["FLT3_ITD"] = (
-                molecular_df["ID"].astype(str).isin(itd_ids).astype(int)
-            )
-            molecular_df["FLT3_TKD"] = (
-                molecular_df["ID"].astype(str).isin(tkd_ids).astype(int)
-            )
-        else:
-            molecular_df["FLT3_ITD"], molecular_df["FLT3_TKD"] = 0, 0
+        gene_col = MOLECULAR_INPUT_COLUMNS.get("gene", "GENE")
+        effect_col = MOLECULAR_INPUT_COLUMNS.get("effect", "EFFECT")
+        protein_change_col = MOLECULAR_INPUT_COLUMNS.get("protein_change", "PROTEIN_CHANGE")
+
+        for feature_name, details in MUTATION_TYPE_PATTERNS.items():
+            gene = details.get("gene")
+            if gene and gene_col in maf_df.columns and gene in maf_df[gene_col].values:
+                gene_patients = maf_df[maf_df[gene_col] == gene]
+                
+                if details.get("type") == "count":
+                    counts = gene_patients["ID"].value_counts()
+                    biallelic_ids = counts[counts >= details.get("threshold", 2)].index
+                    molecular_df[feature_name] = molecular_df["ID"].astype(str).isin(biallelic_ids).astype(int)
+                
+                elif details.get("type") == "pattern_match":
+                    col_to_search = locals().get(f"{details.get('on_column', 'effect')}_col")
+                    if col_to_search and col_to_search in gene_patients.columns:
+                        pattern = details.get("pattern", "")
+                        matching_ids = gene_patients[
+                            gene_patients[col_to_search]
+                            .astype(str)
+                            .str.contains(pattern, case=False, na=False)
+                        ]["ID"].unique()
+                        molecular_df[feature_name] = molecular_df["ID"].astype(str).isin(matching_ids).astype(int)
+            else:
+                molecular_df[feature_name] = 0
+                
         return molecular_df
 
     @staticmethod
     def _extract_comutation_patterns(molecular_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Enrichie pour extraire des interactions de gènes complexes et des ratios de VAF.
+        Crée des features de co-mutation et de ratio de VAF basées sur la configuration.
         """
         print("[FE Mol.] Création des patterns de co-mutation...")
         df_out = molecular_df.copy()
 
-        # --- Feature existante ---
-        if "mut_NPM1" in df_out.columns and "mut_FLT3" in df_out.columns:
-            df_out["NPM1_pos_FLT3_neg"] = (
-                (df_out["mut_NPM1"] == 1) & (df_out["mut_FLT3"] == 0)
-            ).astype(int)
+        for feature_name, details in COMUTATION_PATTERNS.items():
+            feature_type = details.get("type")
+            
+            if feature_type == "co_occurrence":
+                genes = details.get("genes", [])
+                required_mut_cols = [f"mut_{g}" for g in genes]
+                
+                if all(col in df_out.columns for col in required_mut_cols):
+                    # Crée une condition pour chaque gène et son état attendu (présent/absent)
+                    conditions = []
+                    for i, gene in enumerate(genes):
+                        is_mutated = details.get("status", [1]*len(genes))[i] == 1
+                        conditions.append(df_out[f"mut_{gene}"] == (1 if is_mutated else 0))
+                    
+                    # Combine toutes les conditions avec un AND logique
+                    df_out[feature_name] = pd.concat(conditions, axis=1).all(axis=1).astype(int)
 
-        # --- NOUVEAU: Double-hit sur les gènes du Spliceosome ---
-        spliceosome_genes = GENE_PATHWAYS.get("RNA_splicing", [])
-        spliceosome_cols = [
-            f"mut_{g}" for g in spliceosome_genes if f"mut_{g}" in df_out.columns
-        ]
-        if len(spliceosome_cols) > 1:
-            df_out["spliceosome_hit_count"] = df_out[spliceosome_cols].sum(axis=1)
-            df_out["double_hit_spliceosome"] = (
-                df_out["spliceosome_hit_count"] >= 2
-            ).astype(int)
+            elif feature_type == "multi_hit":
+                pathway = details.get("pathway")
+                min_hits = details.get("min_hits", 2)
+                
+                if pathway and pathway in GENE_PATHWAYS:
+                    pathway_genes = GENE_PATHWAYS[pathway]
+                    mut_cols = [f"mut_{g}" for g in pathway_genes if f"mut_{g}" in df_out.columns]
+                    
+                    if mut_cols:
+                        df_out[f"{pathway}_hit_count"] = df_out[mut_cols].sum(axis=1)
+                        df_out[feature_name] = (df_out[f"{pathway}_hit_count"] >= min_hits).astype(int)
 
-        # --- NOUVEAU: Triple-hit sur les gènes Epigénétiques (D/T/I) ---
-        # On vérifie la présence d'au moins une mutation dans chaque sous-groupe
-        has_dnmt3a = df_out.get("mut_DNMT3A", pd.Series(0, index=df_out.index))
-        has_tet2 = df_out.get("mut_TET2", pd.Series(0, index=df_out.index))
+            elif feature_type == "vaf_ratio":
+                num_gene = details.get("numerator")
+                den_gene = details.get("denominator")
+                num_vaf_col = f"vaf_max_{num_gene}"
+                den_vaf_col = f"vaf_max_{den_gene}"
 
-        idh_cols = [c for c in ["mut_IDH1", "mut_IDH2"] if c in df_out.columns]
-        has_idh = (
-            (df_out[idh_cols].sum(axis=1) > 0).astype(int)
-            if idh_cols
-            else pd.Series(0, index=df_out.index)
-        )
-
-        df_out["epigenetic_hit_count"] = has_dnmt3a + has_tet2 + has_idh
-        df_out["triple_hit_epigenetic"] = (df_out["epigenetic_hit_count"] >= 3).astype(
-            int
-        )
-
-        # --- NOUVEAU: Ratio des VAF FLT3 / NPM1 ---
-        if "vaf_max_FLT3" in df_out.columns and "vaf_max_NPM1" in df_out.columns:
-            npm1_vaf = df_out["vaf_max_NPM1"]
-            flt3_vaf = df_out["vaf_max_FLT3"]
-
-            # Le ratio n'a de sens que si les deux mutations sont présentes
-            df_out["vaf_ratio_FLT3_NPM1"] = (flt3_vaf / (npm1_vaf + 1e-6)).where(
-                (npm1_vaf > 0) & (flt3_vaf > 0), 0
-            )
-
+                if num_vaf_col in df_out.columns and den_vaf_col in df_out.columns:
+                    num_vaf = df_out[num_vaf_col]
+                    den_vaf = df_out[den_vaf_col]
+                    
+                    # Le ratio n'est calculé que si les deux mutations sont présentes
+                    df_out[feature_name] = (num_vaf / (den_vaf + 1e-6)).where(
+                        (den_vaf > 0) & (num_vaf > 0), 0
+                    )
         return df_out
 
     @staticmethod

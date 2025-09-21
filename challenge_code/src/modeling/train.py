@@ -31,13 +31,7 @@ except ImportError:
 
 from ..config import (
     SEED,
-    COX_PARAMS,
-    RSF_PARAMS,
-    GRADIENT_BOOSTING_PARAMS,
-    COXNET_PARAMS,
-    EXTRA_TREES_PARAMS,
-    COMPONENTWISE_GB_PARAMS,
-    PYCOX_DEEPSURV_PARAMS,
+    MODELING,
 )
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -76,7 +70,7 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         )
 
     # Config
-    config = PYCOX_DEEPSURV_PARAMS.copy()
+    config = MODELING['models']['DeepSurv']['params'].copy()
     config.update(params)
 
     hidden_layers = config["hidden_layers"]
@@ -187,179 +181,56 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     return PyCoxWrapper(model, scaler, labtrans)
 
 
-def train_cox_model(X_train, y_train, alpha=None):
+def train_cox_model(X_train, y_train, **params):
     """Train a Cox Proportional Hazards model with config parameters"""
-    if alpha is None:
-        alpha = COX_PARAMS["alpha"]
-    cox = CoxPHSurvivalAnalysis(alpha=alpha)
+    config = MODELING['models']['Cox']['params'].copy()
+    config.update(params)
+    cox = CoxPHSurvivalAnalysis(**config)
     cox.fit(X_train, y_train)
     return cox
 
 
-def train_rsf_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    min_samples_split=None,
-    min_samples_leaf=None,
-    max_depth=None,
-):
+def train_rsf_model(X_train, y_train, **params):
     """Train a Random Survival Forest model with config parameters"""
-    n_estimators = (
-        n_estimators if n_estimators is not None else RSF_PARAMS["n_estimators"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else RSF_PARAMS["min_samples_split"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else RSF_PARAMS["min_samples_leaf"]
-    )
-    max_depth = max_depth if max_depth is not None else RSF_PARAMS["max_depth"]
-    rsf = RandomSurvivalForest(
-        n_estimators=n_estimators,
-        min_samples_split=min_samples_split,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,
-        random_state=SEED,
-    )
+    config = MODELING['models']['RSF']['params'].copy()
+    config.update(params)
+    rsf = RandomSurvivalForest(random_state=SEED, **config)
     rsf.fit(X_train, y_train)
     return rsf
 
 
-def train_gradient_boosting_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    learning_rate=None,
-    max_depth=None,
-    subsample=None,
-    min_samples_leaf=None,
-    min_samples_split=None,
-):
+def train_gradient_boosting_model(X_train, y_train, **params):
     """Train a Gradient Boosting Survival Analysis model with config parameters"""
-    n_estimators = (
-        n_estimators
-        if n_estimators is not None
-        else GRADIENT_BOOSTING_PARAMS["n_estimators"]
-    )
-    learning_rate = (
-        learning_rate
-        if learning_rate is not None
-        else GRADIENT_BOOSTING_PARAMS["learning_rate"]
-    )
-    max_depth = (
-        max_depth if max_depth is not None else GRADIENT_BOOSTING_PARAMS["max_depth"]
-    )
-    subsample = (
-        subsample if subsample is not None else GRADIENT_BOOSTING_PARAMS["subsample"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else GRADIENT_BOOSTING_PARAMS["min_samples_leaf"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else GRADIENT_BOOSTING_PARAMS["min_samples_split"]
-    )
-    xgb_surv = GradientBoostingSurvivalAnalysis(
-        random_state=SEED,
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        max_depth=max_depth,
-        subsample=subsample,
-        min_samples_leaf=min_samples_leaf,
-        min_samples_split=min_samples_split,
-    )
+    config = MODELING['models']['GradientBoosting']['params'].copy()
+    config.update(params)
+    xgb_surv = GradientBoostingSurvivalAnalysis(random_state=SEED, **config)
     xgb_surv.fit(X_train, y_train)
     return xgb_surv
 
 
-def train_coxnet_model(X_train, y_train, l1_ratio=None, n_alphas=None, max_iter=None):
+def train_coxnet_model(X_train, y_train, **params):
     """Train a Cox model with elastic net regularization (CoxNet)"""
-    l1_ratio = l1_ratio if l1_ratio is not None else COXNET_PARAMS["l1_ratio"]
-    n_alphas = n_alphas if n_alphas is not None else COXNET_PARAMS["n_alphas"]
-    max_iter = max_iter if max_iter is not None else COXNET_PARAMS["max_iter"]
-
-    coxnet = CoxnetSurvivalAnalysis(
-        l1_ratio=l1_ratio,
-        n_alphas=n_alphas,
-        normalize=COXNET_PARAMS.get("normalize", True),
-        max_iter=max_iter,
-    )
+    config = MODELING['models']['CoxNet']['params'].copy()
+    config.update(params)
+    coxnet = CoxnetSurvivalAnalysis(**config)
     coxnet.fit(X_train, y_train)
     return coxnet
 
 
-def train_extra_trees_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    min_samples_split=None,
-    min_samples_leaf=None,
-    max_depth=None,
-    max_features=None,
-):
+def train_extra_trees_model(X_train, y_train, **params):
     """Train an Extra Survival Trees model"""
-    n_estimators = (
-        n_estimators if n_estimators is not None else EXTRA_TREES_PARAMS["n_estimators"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else EXTRA_TREES_PARAMS["min_samples_split"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else EXTRA_TREES_PARAMS["min_samples_leaf"]
-    )
-    max_depth = max_depth if max_depth is not None else EXTRA_TREES_PARAMS["max_depth"]
-    max_features = (
-        max_features if max_features is not None else EXTRA_TREES_PARAMS["max_features"]
-    )
-
-    extra_trees = ExtraSurvivalTrees(
-        n_estimators=n_estimators,
-        min_samples_split=min_samples_split,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,
-        max_features=max_features,
-        random_state=SEED,
-    )
+    config = MODELING['models']['ExtraTrees']['params'].copy()
+    config.update(params)
+    extra_trees = ExtraSurvivalTrees(random_state=SEED, **config)
     extra_trees.fit(X_train, y_train)
     return extra_trees
 
 
-def train_componentwise_gb_model(
-    X_train, y_train, n_estimators=None, learning_rate=None, subsample=None
-):
+def train_componentwise_gb_model(X_train, y_train, **params):
     """Train a Componentwise Gradient Boosting model"""
-    n_estimators = (
-        n_estimators
-        if n_estimators is not None
-        else COMPONENTWISE_GB_PARAMS["n_estimators"]
-    )
-    learning_rate = (
-        learning_rate
-        if learning_rate is not None
-        else COMPONENTWISE_GB_PARAMS["learning_rate"]
-    )
-    subsample = (
-        subsample if subsample is not None else COMPONENTWISE_GB_PARAMS["subsample"]
-    )
-
-    comp_gb = ComponentwiseGradientBoostingSurvivalAnalysis(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        subsample=subsample,
-        random_state=SEED,
-    )
+    config = MODELING['models']['ComponentwiseGB']['params'].copy()
+    config.update(params)
+    comp_gb = ComponentwiseGradientBoostingSurvivalAnalysis(random_state=SEED, **config)
     comp_gb.fit(X_train, y_train)
     return comp_gb
 
@@ -417,22 +288,29 @@ def load_training_dataset_csv(X_train_path, y_train_path):
 
 def get_survival_models():
     """
-    Retourne un dictionnaire de modèles de survie non-entraînés
-    avec leurs paramètres par défaut.
+    Returns a dictionary of non-trained survival models based on the configuration
+    in `config.py`.
     """
-    models = {
-        "Cox": CoxPHSurvivalAnalysis(**COX_PARAMS),
-        "RSF": RandomSurvivalForest(**RSF_PARAMS, random_state=SEED),
-        "GradientBoosting": GradientBoostingSurvivalAnalysis(
-            **GRADIENT_BOOSTING_PARAMS, random_state=SEED
-        ),
-        "CoxNet": CoxnetSurvivalAnalysis(**COXNET_PARAMS),
-        "ExtraTrees": ExtraSurvivalTrees(**EXTRA_TREES_PARAMS, random_state=SEED),
-        "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis(
-            **COMPONENTWISE_GB_PARAMS, random_state=SEED
-        ),
+    model_classes = {
+        "Cox": CoxPHSurvivalAnalysis,
+        "RSF": RandomSurvivalForest,
+        "GradientBoosting": GradientBoostingSurvivalAnalysis,
+        "CoxNet": CoxnetSurvivalAnalysis,
+        "ExtraTrees": ExtraSurvivalTrees,
+        "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis,
     }
 
-    # Nous avons mis PyCox de côté pour l'instant pour simplifier.
+    models = {}
+    for name, config in MODELING["models"].items():
+        if config.get("enabled", False):
+            params = config.get("params", {}).copy()
+            
+            # Add random_state for models that support it
+            if name in ["RSF", "GradientBoosting", "ExtraTrees", "ComponentwiseGB"]:
+                params["random_state"] = SEED
+
+            # PyCox is handled separately by its training function, so we don't instantiate it here.
+            if name in model_classes:
+                models[name] = model_classes[name](**params)
 
     return models

@@ -1,0 +1,146 @@
+{
+  "tag": "baseline_supervised_mono-974f4bc502",
+  "created_at": "2025-09-16T21:44:33.263933Z",
+  "config": {
+    "EXPERIMENT": {
+      "keep_monocyte_indicator": false,
+      "model_family": "rsf",
+      "name": "baseline_supervised_mono",
+      "prune_feature": false,
+      "prune_feature_threshold": 0.9,
+      "random_seed": 42,
+      "use_center_ohe": false,
+      "use_monocyte_supervised": true
+    },
+    "PREPROCESSING": {
+      "clip_quantiles": {
+        "lower": 0.01,
+        "upper": 0.99
+      },
+      "drop_zero_variance": true,
+      "imputer": "iterative",
+      "iterative": {
+        "HistGradientBoosting": {
+          "max_iter": 50
+        },
+        "estimator": "RandomForest",
+        "estimator_n_estimators": 120,
+        "max_iter": 200,
+        "random_state": 42
+      },
+      "knn": {
+        "n_neighbors": 4
+      },
+      "monocyte_imputer": {
+        "clip_to_wbc": true,
+        "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
+        "predictors": {
+          "cat": [
+            "CENTER"
+          ],
+          "num": [
+            "WBC",
+            "ANC",
+            "HB",
+            "PLT",
+            "BM_BLAST"
+          ]
+        },
+        "preprocessing": {
+          "num_imputer": "median",
+          "num_scaler": "standard"
+        },
+        "regressor": {
+          "l2_regularization": 0.0,
+          "learning_rate": 0.08,
+          "max_depth": null,
+          "max_iter": 400,
+          "random_state": 42,
+          "type": "HistGradientBoostingRegressor"
+        },
+        "winsorize_pct": 99.5
+      },
+      "numeric_scaler": "robust"
+    }
+  },
+  "env": {
+    "python": "3.11.9",
+    "platform": "Windows-10-10.0.22631-SP0",
+    "git_commit": "a9d06f6daaf7bbb03545c053617d7719d13fcb85"
+  },
+  "extra": {
+    "preprocessing_report": {
+      "imputer_strategy": "iterative",
+      "knn_n_neighbors": 4,
+      "iterative": {
+        "max_iter": 200,
+        "estimator": "RandomForest",
+        "estimator_n_estimators": 120,
+        "random_state": 42,
+        "HistGradientBoosting": {
+          "max_iter": 50
+        }
+      },
+      "clip_quantiles": {
+        "lower": 0.01,
+        "upper": 0.99
+      },
+      "numeric_scaler": "robust",
+      "monocyte_imputer": {
+        "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
+        "predictors": {
+          "num": [
+            "WBC",
+            "ANC",
+            "HB",
+            "PLT",
+            "BM_BLAST"
+          ],
+          "cat": [
+            "CENTER"
+          ]
+        },
+        "preprocessing": {
+          "num_imputer": "median",
+          "num_scaler": "standard"
+        },
+        "regressor": {
+          "type": "HistGradientBoostingRegressor",
+          "learning_rate": 0.08,
+          "max_depth": null,
+          "max_iter": 400,
+          "l2_regularization": 0.0,
+          "random_state": 42
+        },
+        "clip_to_wbc": true,
+        "winsorize_pct": 99.5
+      }
+    },
+    "clinical_ranges": {
+      "BM_BLAST": [
+        0,
+        100
+      ],
+      "WBC": [
+        0,
+        400
+      ],
+      "ANC": [
+        0,
+        100
+      ],
+      "MONOCYTES": [
+        0,
+        100
+      ],
+      "PLT": [
+        0,
+        3000
+      ],
+      "HB": [
+        2,
+        25
+      ]
+    }
+  }
+}

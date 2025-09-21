@@ -8,7 +8,7 @@ molecular, and survival data for AML patients.
 from typing import Tuple
 import pandas as pd
 import numpy as np
-from ...config import CLINICAL_RANGES
+from ...config import CLINICAL_RANGES, PREPROCESSING
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
@@ -17,7 +17,7 @@ class ClipQuantiles(BaseEstimator, TransformerMixin):
     Clippe les colonnes et est maintenant 100% compatible avec l'API set_output.
     """
 
-    def __init__(self, lower=0.01, upper=0.99):
+    def __init__(self, lower=None, upper=None):
         self.lower = lower
         self.upper = upper
 
@@ -25,9 +25,13 @@ class ClipQuantiles(BaseEstimator, TransformerMixin):
         # S'assurer que X est un DataFrame pour utiliser .quantile
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
+            
+        clip_quantiles_config = PREPROCESSING.get("clip_quantiles", {})
+        lower = self.lower if self.lower is not None else clip_quantiles_config.get("lower", 0.01)
+        upper = self.upper if self.upper is not None else clip_quantiles_config.get("upper", 0.99)
 
-        self.lower_bounds_ = X.quantile(self.lower)
-        self.upper_bounds_ = X.quantile(self.upper)
+        self.lower_bounds_ = X.quantile(lower)
+        self.upper_bounds_ = X.quantile(upper)
         self.feature_names_in_ = X.columns.tolist()
         return self
 

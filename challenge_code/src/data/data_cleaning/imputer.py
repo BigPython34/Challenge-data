@@ -15,7 +15,10 @@ import numpy as np
 import os
 import joblib
 import json
+from ...config import PREPROCESSING, SEED
 
+
+from ...config import PREPROCESSING, SEED
 
 class AdvancedImputer(BaseEstimator, TransformerMixin):
     """
@@ -23,7 +26,7 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
     Cette version est corrigée pour être internement cohérente.
     """
 
-    def __init__(self, strategy: str = "iterative", n_neighbors: int = 4):
+    def __init__(self, strategy: str = "iterative", n_neighbors: int = None):
         self.strategy = strategy
         self.n_neighbors = n_neighbors
         self.imputer_ = None
@@ -32,16 +35,52 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         """Apprend les paramètres d'imputation et stocke les noms de colonnes."""
         if self.strategy == "knn":
-            self.imputer_ = KNNImputer(n_neighbors=self.n_neighbors)
+            knn_config = PREPROCESSING.get("knn", {})
+            n_neighbors = self.n_neighbors if self.n_neighbors is not None else knn_config.get("n_neighbors", 4)
+            self.imputer_ = KNNImputer(n_neighbors=n_neighbors)
         elif self.strategy == "iterative":
-            estimator = RandomForestRegressor(
-                n_estimators=40, random_state=42, n_jobs=-1
-            )
+            iterative_config = PREPROCESSING.get("iterative", {})
+            estimator_name = iterative_config.get("estimator", "RandomForest")
+            estimator_params = iterative_config.get("estimator_params", {})
+
+            # Supporte plusieurs estimateurs
+            if estimator_name == "RandomForest":
+                from sklearn.ensemble import RandomForestRegressor
+                params = {
+                    "n_estimators": iterative_config.get("estimator_n_estimators", 70),
+                    "random_state": SEED,
+                    "n_jobs": iterative_config.get("n_jobs", -1)
+                }
+                params.update(estimator_params)
+                estimator = RandomForestRegressor(**params)
+            elif estimator_name == "ExtraTrees":
+                from sklearn.ensemble import ExtraTreesRegressor
+                params = {
+                    "n_estimators": iterative_config.get("estimator_n_estimators", 70),
+                    "random_state": SEED,
+                    "n_jobs": iterative_config.get("n_jobs", -1)
+                }
+                params.update(estimator_params)
+                estimator = ExtraTreesRegressor(**params)
+            elif estimator_name == "BayesianRidge":
+                from sklearn.linear_model import BayesianRidge
+                params = {"random_state": SEED}
+                params.update(estimator_params)
+                estimator = BayesianRidge(**params)
+            elif estimator_name == "HistGradientBoosting":
+                from sklearn.ensemble import HistGradientBoostingRegressor
+                params = {"random_state": SEED}
+                params.update(estimator_params)
+                estimator = HistGradientBoostingRegressor(**params)
+            else:
+                raise ValueError(f"Estimateur non supporté: {estimator_name}")
+
             self.imputer_ = IterativeImputer(
                 estimator=estimator,
-                max_iter=70,
-                random_state=42,
-                initial_strategy="median",
+                max_iter=iterative_config.get("max_iter", 350),
+                random_state=SEED,
+                initial_strategy=iterative_config.get("initial_strategy", "median"),
+                verbose=iterative_config.get("verbose", 2)
             )
 
         self.imputer_.fit(X)

@@ -1,6 +1,6 @@
 import os
 from typing import List, Optional, Sequence, Tuple
-from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY
+from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY, PRUNING_POLICY
 import numpy as np
 import pandas as pd
 
@@ -18,16 +18,8 @@ def _compute_upper_corr(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_priority_rules(corr_upper: pd.DataFrame, threshold: float) -> List[str]:
-    """
-    Applique des règles de priorité pour décider quelles colonnes supprimer
-    lorsqu'une forte corrélation est détectée.
-
-    Règles implémentées (basées sur le script d'origine):
-      - Garder les features mutation spécifiques (mut_*) vs *_altered ou *_count
-      - Garder la version log en supprimant l'original (si corrélé)
-      - Garder la moyenne vs supprimer la médiane (si corrélées)
-    """
     to_drop: set[str] = set()
+    rules = PRUNING_POLICY.get("priority_rules", [])
 
     for col in corr_upper.columns:
         if col not in corr_upper.columns:
@@ -36,39 +28,39 @@ def _apply_priority_rules(corr_upper: pd.DataFrame, threshold: float) -> List[st
         for correlated_col in strong_corrs:
             if correlated_col not in corr_upper.index:
                 continue
+            
+            for rule in rules:
+                keep_pattern = rule["keep"]
+                drop_pattern = rule["drop"]
 
-            # Règle 1: mut_* prioritaire sur *_altered et *_count
-            if ("_altered" in col or "_count" in col) and ("mut_" in correlated_col):
-                to_drop.add(col)
-            elif ("_altered" in correlated_col or "_count" in correlated_col) and (
-                "mut_" in col
-            ):
-                to_drop.add(correlated_col)
+                # Handle log rule specifically
+                if keep_pattern == "log_" and drop_pattern == "":
+                    if f"log_{col}" == correlated_col:
+                        to_drop.add(col)
+                    elif f"log_{correlated_col}" == col:
+                        to_drop.add(correlated_col)
+                    continue
 
-            # Règle 2: garder la version log_*
-            if f"log_{col}" == correlated_col:
-                to_drop.add(col)
-            elif f"log_{correlated_col}" == col:
-                to_drop.add(correlated_col)
-
-            # Règle 3: mean vs median -> garder mean
-            if ("median" in col) and ("mean" in correlated_col):
-                to_drop.add(col)
-            elif ("mean" in col) and ("median" in correlated_col):
-                to_drop.add(correlated_col)
+                if (drop_pattern in col and keep_pattern in correlated_col):
+                    to_drop.add(col)
+                elif (drop_pattern in correlated_col and keep_pattern in col):
+                    to_drop.add(correlated_col)
 
     return list(to_drop)
 
 
 def prune_highly_correlated_features(
-    df: pd.DataFrame, threshold: float = 0.90, id_cols: Optional[Sequence[str]] = None
+    df: pd.DataFrame, threshold: float = None, id_cols: Optional[Sequence[str]] = None
 ) -> pd.DataFrame:
     """
     Supprime les features fortement corrélées d'un DataFrame unique, en excluant
     les colonnes d'identifiants. Utilisée pour compatibilité.
     """
     if id_cols is None:
-        id_cols = ("ID", "CENTER_GROUP")
+        id_cols = PRUNING_POLICY.get("default_id_cols", ("ID", "CENTER_GROUP"))
+    
+    if threshold is None:
+        threshold = PRUNING_POLICY.get("correlation_threshold", 0.9)
 
     print(f"\n[PRUNING] Élagage des features (seuil > {threshold}) sur un DataFrame...")
     df_to_prune = df.copy()
@@ -116,7 +108,7 @@ def prune_highly_correlated_features(
 def prune_highly_correlated_features_pair(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
-    threshold: float = 0.90,
+    threshold: float = None,
     id_cols: Optional[Sequence[str]] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -124,7 +116,9 @@ def prune_highly_correlated_features_pair(
     puis appliqué à train et test pour garder des schémas identiques.
     """
     if id_cols is None:
-        id_cols = ("ID", "CENTER_GROUP")
+        id_cols = PRUNING_POLICY.get("default_id_cols", ("ID", "CENTER_GROUP"))
+    if threshold is None:
+        threshold = PRUNING_POLICY.get("correlation_threshold", 0.9)
     # Toujours travailler avec une liste pour l'indexation pandas
     id_cols_list = [c for c in id_cols]
 
@@ -278,7 +272,7 @@ def prune_rare_binary_features(
     test_df: pd.DataFrame,
     threshold: float,
     ignore_cols: List[str],
-) -> (pd.DataFrame, pd.DataFrame):
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Identifie et supprime les features binaires rares des jeux d'entraînement et de test.
     """
