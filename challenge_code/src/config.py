@@ -288,12 +288,11 @@ PREPROCESSING = {
     "iterative": {
         "max_iter": 200,
         "estimator": "RandomForest",
-        "estimator_n_estimators": 120,
+        "estimator_n_estimators": 200,
         "random_state": SEED,
     "HistGradientBoosting":{
         "max_iter":50
     }
-        # Pour ExtraTrees, BayesianRidge, etc., adaptez les clés selon la doc scikit-learn
     },
    
     "monocyte_imputer": {
@@ -321,6 +320,15 @@ PREPROCESSING = {
     "clip_quantiles": {"lower": 0.01, "upper": 0.99},
     "numeric_scaler": "robust",
     "drop_zero_variance": True,
+    "auto_detect_continuous_features": False,
+    "continuous_threshold": 20,
+    "continuous_features": [
+    'BM_BLAST', 'WBC', 'ANC', 'MONOCYTES', 'HB', 'PLT',
+    'neutrophil_ratio', 'monocyte_ratio', 'platelet_wbc_ratio', 'blast_platelet_ratio',
+    'vaf_max_TP53', 'vaf_max_FLT3', 'vaf_max_NPM1', 'vaf_max_CEBPA', 'vaf_max_DNMT3A',
+    'vaf_mean', 'vaf_median', 'vaf_max', 'vaf_std', 'high_vaf_ratio',
+    'max_cadd_score', 'mean_cadd_score', 'max_gerp_score'
+]
 }
 
 EXPERIMENT = {

@@ -13,109 +13,85 @@ def get_preprocessing_pipeline(
     X_train_df: pd.DataFrame, strategy: str = "iterative"
 ) -> ColumnTransformer:
     """
-    Crée un pipeline de prétraitement robuste qui DÉTECTE AUTOMATIQUEMENT les types de colonnes.
+    Crée une pipeline de prétraitement robuste avec une imputation différenciée
+    pour les features continues, binaires, ordinales et de comptage.
     """
-    print(
-        "\n[PREPROCESSING] Création de la pipeline de prétraitement (version robuste)..."
-    )
+    print("\n[PREPROCESSING] Création de la pipeline de prétraitement (avec imputation différenciée)...")
 
-    # --- DÉTECTION AUTOMATIQUE DES TYPES DE FEATURES ---
+    # --- 1. Identification précise des types de features ---
+    
+    # Catégoriel (texte)
+    categorical_features = [col for col in ["CENTER", "CENTER_GROUP"] if col in X_train_df.columns]
 
-    # 1. Identifier les colonnes catégorielles connues
-    categorical_features = [
-        col for col in ["CENTER", "CENTER_GROUP"] if col in X_train_df.columns
+
+    continuous_features = PREPROCESSING["continuous_features"]
+    continuous_features = [col for col in continuous_features if col in X_train_df.columns]
+
+    # Identifier les autres types de colonnes
+    binary_features = []
+    count_features = []
+    ordinal_features = []
+    
+    potential_discrete_features = [
+        col for col in X_train_df.columns 
+        if col not in categorical_features and col not in continuous_features
     ]
-
-    # 2. Pour le reste, détecter le type en fonction du nombre de valeurs uniques
-    continuous_features = []
-    discrete_features = []
-
-    # Seuil pour distinguer discret de continu (ajustable)
-    CONTINUOUS_THRESHOLD = 20
-
-    # Consider all non-categorical columns as potential features. Previously
-    # columns containing the substring 'count' were excluded which caused
-    # numeric count features (e.g., cosmic_*_count) to be dropped by the
-    # ColumnTransformer (remainder='drop'). Keep them and let detection
-    # decide continuous vs discrete.
-    potential_features = [
-        col for col in X_train_df.columns if col not in categorical_features
-    ]
-
-    for col in potential_features:
-        # Si la colonne est numérique et a beaucoup de valeurs uniques -> Continue
-        if (
-            pd.api.types.is_numeric_dtype(X_train_df[col])
-            and X_train_df[col].nunique() > CONTINUOUS_THRESHOLD
-            and not "count" in col
-        ):
-            continuous_features.append(col)
-        # Sinon (binaire, ou peu de valeurs uniques, ou non-numérique) -> Discrète
+    
+    for col in potential_discrete_features:
+        # Est-ce une feature binaire (0/1) ? (y compris les _missing)
+        if X_train_df[col].nunique() <= 2 and ('mut_' in col or '_missing' in col or '_altered' in col or 'any_' in col or 'has_' in col):
+            binary_features.append(col)
+        # Est-ce un comptage ?
+        elif 'count' in col or 'num_' in col or 'total_mutations' in col:
+            count_features.append(col)
+        # Le reste est considéré comme ordinal (scores, etc.)
         else:
-            discrete_features.append(col)
+            ordinal_features.append(col)
 
-    print(
-        f"   -> Features auto-détectées : {len(continuous_features)} continues, {len(discrete_features)} discrètes, {len(categorical_features)} catégorielles."
-    )
-    print(continuous_features)
+    print(f"   -> Features identifiées : {len(continuous_features)} continues, {len(binary_features)} binaires, {len(count_features)} comptages, {len(ordinal_features)} ordinales, {len(categorical_features)} catégorielles.")
+    
+    # --- 2. Définition des pipelines de transformation distinctes ---
+    
+    continuous_transformer = Pipeline(steps=[
+        ('clip', ClipQuantiles(lower=0.01, upper=0.99)),
+        ('imputer', AdvancedImputer(strategy=strategy)),
+        ('scaler', RobustScaler())
+    ])
 
-    # --- DÉFINITION DES PIPELINES DE TRANSFORMATION (pilotées par la config) ---
+    # Stratégie pour les binaires : imputer par la constante 0 (absence de l'événement)
+    binary_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value=0))
+    ])
+    
+    # Stratégie pour les comptages et ordinaux : imputer par la médiane (plus robuste)
+    count_ordinal_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median'))
+    ])
 
-    clip_lower = PREPROCESSING.get("clip_quantiles", {}).get("lower", 0.01)
-    clip_upper = PREPROCESSING.get("clip_quantiles", {}).get("upper", 0.99)
-    scaler_choice = PREPROCESSING.get("numeric_scaler", "robust")
-    scaler = StandardScaler() if scaler_choice == "standard" else RobustScaler()
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='constant', fill_value='Unknown')),
+        ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+    ])
 
-    adv_kwargs = {}
-    if strategy == "knn":
-        adv_kwargs["n_neighbors"] = PREPROCESSING.get("knn", {}).get("n_neighbors", 4)
-
-    # Pipeline pour les variables continues
-    continuous_transformer = Pipeline(
-        steps=[
-            ("clip", ClipQuantiles(lower=clip_lower, upper=clip_upper)),
-            ("imputer", AdvancedImputer(strategy=strategy, **adv_kwargs)),
-            ("scaler", scaler),
-        ]
-    )
-
-    # Pipeline pour les variables discrètes (toutes les autres)
-    # SimpleImputer est sûr pour les colonnes binaires/numériques à faible cardinalité
-    discrete_transformer = Pipeline(
-        steps=[("imputer", SimpleImputer(strategy="most_frequent"))]
-    )
-
-    # Pipeline pour les variables catégorielles
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="constant", fill_value="Unknown")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
-
-    # --- ASSEMBLAGE FINAL DU COLUMNTRANSFORMER ---
-
-    # On ne crée une étape que si des colonnes de ce type ont été trouvées
+    # --- 3. Assemblage final du ColumnTransformer ---
     transformers = []
     if continuous_features:
         transformers.append(("continuous", continuous_transformer, continuous_features))
-    if discrete_features:
-        transformers.append(("discrete", discrete_transformer, discrete_features))
+    if binary_features:
+        transformers.append(("binary", binary_transformer, binary_features))
+    if count_features:
+        transformers.append(("count", count_ordinal_transformer, count_features))
+    if ordinal_features:
+        transformers.append(("ordinal", count_ordinal_transformer, ordinal_features))
     if categorical_features:
-        transformers.append(
-            ("categorical", categorical_transformer, categorical_features)
-        )
+        transformers.append(("categorical", categorical_transformer, categorical_features))
 
     preprocessor = ColumnTransformer(
         transformers=transformers,
-        remainder="drop",  # Ignore les colonnes non spécifiées (sécurité)
-        verbose_feature_names_out=False,
+        remainder="drop",
+        verbose_feature_names_out=False
     )
-
-    # Activation de la sortie en DataFrame Pandas
     preprocessor.set_output(transform="pandas")
 
-    print(
-        "[PREPROCESSING] Pipeline de prétraitement prête (sortie DataFrame activée).\n"
-    )
+    print("[PREPROCESSING] Pipeline prête (sortie DataFrame activée).\n")
     return preprocessor
