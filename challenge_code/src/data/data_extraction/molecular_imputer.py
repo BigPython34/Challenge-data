@@ -34,7 +34,7 @@ class MolecularImputer:
     def _make_variant_id(self, row: pd.Series) -> str:
         """Crée un identifiant de variant unique de manière robuste."""
         try:
-            # Gérer le cas où CHR est un nombre ou une chaîne comme 'X', 'Y'
+
             chr_val = str(row["CHR"]).replace(".0", "")  # Retire ".0" si c'est un float
             return f"chr{chr_val}:g.{int(row['START'])}{row['REF']}>{row['ALT']}"
         except (ValueError, TypeError):
@@ -67,7 +67,7 @@ class MolecularImputer:
         """
         vid = row.get("variant_id")
 
-        # --- BLOC DE DÉBOGAGE CIBLÉ (peut être commenté en production) ---
+
         # Mettez ici l'ID du variant que vous voulez tracer.
         TARGET_VID = "chrX:g.15349337C>T"
         is_target_variant = vid == TARGET_VID
@@ -79,10 +79,10 @@ class MolecularImputer:
             print(
                 f"  Ligne originale: EFFECT='{row.get('EFFECT')}', IMPACT='{row.get('IMPACT')}'"
             )
-        # --- FIN DU BLOC DE DÉBOGAGE ---
+
 
         if not vid:
-            return row  # Ne peut rien faire si l'ID n'a pas pu être généré
+            return row
 
         data = self.variant_data.get(vid)
         if not data:
@@ -98,7 +98,7 @@ class MolecularImputer:
         snpeff_data = data.get("snpeff", {}) or {}
         ann_raw = snpeff_data.get(
             "ann"
-        )  # On ne met pas de valeur par défaut pour mieux analyser
+        )
 
         if not ann_raw:
             if is_target_variant:
@@ -107,7 +107,7 @@ class MolecularImputer:
                 )
             return row
 
-        # --- CORRECTION CLÉ : Gérer les cas où 'ann' est un dict ou une liste ---
+
         annotations_list = []
         if isinstance(ann_raw, list):
             annotations_list = ann_raw
@@ -119,7 +119,7 @@ class MolecularImputer:
                 print("  [AVERTISSEMENT DEBUG] La clé 'ann' est vide !")
             return row
 
-        # Sélectionner la meilleure annotation basée sur l'impact
+
         ann = self._get_best_annotation(annotations_list)
 
         if is_target_variant:

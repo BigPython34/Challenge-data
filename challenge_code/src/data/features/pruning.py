@@ -65,7 +65,7 @@ def prune_highly_correlated_features(
     print(f"\n[PRUNING] Élagage des features (seuil > {threshold}) sur un DataFrame...")
     df_to_prune = df.copy()
 
-    # Exclure les colonnes d'identifiants du calcul de corrélation
+
     feature_cols = [c for c in df_to_prune.columns if c not in id_cols]
     work_df = df_to_prune[feature_cols]
 
@@ -76,12 +76,12 @@ def prune_highly_correlated_features(
         )
         return df_to_prune
 
-    # Règles de priorité
+
     to_drop = set(_apply_priority_rules(corr_upper, threshold))
     df_mid = work_df.drop(columns=list(to_drop), errors="ignore")
     print(f"   -> {len(to_drop)} features supprimées par règles de priorité.")
 
-    # Méthode générale: supprimer la 2e des paires restantes au-dessus du seuil
+
     corr_upper2 = _compute_upper_corr(df_mid)
     to_drop_final: set[str] = set()
     for col in corr_upper2.columns:
@@ -94,10 +94,10 @@ def prune_highly_correlated_features(
         f"   -> {len(to_drop_final)} features supplémentaires supprimées par la méthode générale."
     )
 
-    # Réinsérer colonnes d'identifiants au bon endroit si besoin
+
     for id_col in reversed(list(id_cols)):
         if id_col in df_to_prune.columns and id_col not in df_final.columns:
-            # Inserer au début par défaut
+
             df_final.insert(0, id_col, df_to_prune[id_col].values)
 
     # Conserver l'ordre initial autant que possible
@@ -131,7 +131,7 @@ def prune_highly_correlated_features_pair(
     train_feat = train_df[feature_cols]
     test_feat = test_df.reindex(columns=feature_cols)
 
-    # Règles de priorité
+
     corr_upper = _compute_upper_corr(train_feat)
     if corr_upper.empty:
         print(
@@ -143,7 +143,7 @@ def prune_highly_correlated_features_pair(
     train_mid = train_feat.drop(columns=list(to_drop_priority), errors="ignore")
     print(f"   -> {len(to_drop_priority)} features supprimées par règles de priorité.")
 
-    # Méthode générale
+
     corr_upper2 = _compute_upper_corr(train_mid)
     to_drop_general: set[str] = set()
     for col in corr_upper2.columns:
@@ -278,27 +278,27 @@ def prune_rare_binary_features(
     """
     print("Démarrage du pruning des features binaires rares...")
 
-    # S'assurer que les dataframes sont des copies pour éviter les warnings
+
     train_df_pruned = train_df.copy()
     test_df_pruned = test_df.copy()
 
     cols_to_prune = []
 
-    # Itérer sur toutes les colonnes du jeu d'entraînement
+
     for col in train_df_pruned.columns:
         if col in ignore_cols:
             continue
 
-        # On ne s'intéresse qu'aux colonnes qui semblent binaires (0 ou 1)
-        # On tolère les floats (ex: 0.0, 1.0) et les NaNs
+
+
         unique_vals = pd.unique(train_df_pruned[col].dropna())
         is_binary = np.all(np.isin(unique_vals, [0, 1]))
 
         if is_binary:
-            # Calculer la prévalence (fréquence de la valeur 1)
+
             prevalence_train = train_df_pruned[col].mean()
 
-            # Vérifier aussi la prévalence dans le jeu de test si la colonne existe
+
             prevalence_test = 0
             if col in test_df_pruned.columns:
                 prevalence_test = test_df_pruned[col].mean()
@@ -312,7 +312,7 @@ def prune_rare_binary_features(
             f"\n{len(cols_to_prune)} features rares identifiées pour suppression (prévalence < {threshold:.2%}):"
         )
         print(f"{cols_to_prune} will be supp")
-        # Afficher par groupes pour une meilleure lisibilité
+
         groups = {}
         for col in sorted(cols_to_prune):
             prefix = col.split("_")[0]

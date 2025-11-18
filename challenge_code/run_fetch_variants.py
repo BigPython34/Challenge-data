@@ -7,7 +7,7 @@ def main():
     print("=" * 60)
 
     # --- Configuration des chemins ---
-    # Liste de tous les fichiers à scanner pour trouver les variants
+
     INPUT_FILES = [
         "datas/X_train/molecular_train.csv",
         "datas/X_test/molecular_test.csv",
@@ -16,7 +16,7 @@ def main():
     # Fichier de sortie qui sera lu par le MyVariantCleaner
     OUTPUT_PATH = "datas/variant_data.jsonl"
 
-    # --- Exécution ---
+
     fetcher = MyVariantFetcher(concurrency_limit=50, retries=3)
     fetcher.run(input_files=INPUT_FILES, output_path=OUTPUT_PATH)
 

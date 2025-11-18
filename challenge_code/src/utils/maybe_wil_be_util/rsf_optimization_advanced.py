@@ -93,12 +93,12 @@ def main():
         print(f"❌ Erreur import: {e}")
         return
 
-    # 3. Vérifier les optimisations existantes
+
     latest_study = find_latest_study("rsf")
     if latest_study:
         print(f"\n📁 Optimisation existante trouvée: {os.path.basename(latest_study)}")
 
-        # Analyser l'étude existante
+
         try:
             import joblib
 
@@ -146,7 +146,7 @@ def main():
             auto_resume=auto_resume,
         )
 
-        # 7. Résultats finaux
+
         print("-" * 60)
         print("🎉 OPTIMISATION TERMINÉE !")
         print(f"🏆 Meilleur score: {best_score:.4f}")

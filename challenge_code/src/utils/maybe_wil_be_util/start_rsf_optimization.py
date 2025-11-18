@@ -46,9 +46,9 @@ def main():
         print(f"❌ Erreur import: {e}")
         return
 
-    # 3. Configuration par défaut (modifiable ici)
-    N_TRIALS = 300  # Nombre total de trials souhaités
-    N_SPLITS = 5  # Nombre de folds pour la validation croisée
+
+    N_TRIALS = 300
+    N_SPLITS = 5
 
     print(f"\n2. Configuration:")
     print(f"   📊 Trials: {N_TRIALS}")
@@ -76,7 +76,7 @@ def main():
             auto_resume=True,  # Reprise automatique
         )
 
-        # 6. Afficher les résultats finaux
+
         print("-" * 60)
         print("🎉 OPTIMISATION TERMINÉE !")
         print(f"🏆 Meilleur score: {best_score:.4f}")

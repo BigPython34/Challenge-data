@@ -4,8 +4,9 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.experimental import (
     enable_iterative_imputer,
 )
+from sklearn.linear_model import BayesianRidge
 from sklearn.impute import KNNImputer, IterativeImputer
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor,HistGradientBoostingRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, RobustScaler
@@ -45,7 +46,6 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
 
             # Supporte plusieurs estimateurs
             if estimator_name == "RandomForest":
-                from sklearn.ensemble import RandomForestRegressor
                 params = {
                     "n_estimators": iterative_config.get("estimator_n_estimators", 70),
                     "random_state": SEED,
@@ -54,7 +54,6 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
                 params.update(estimator_params)
                 estimator = RandomForestRegressor(**params)
             elif estimator_name == "ExtraTrees":
-                from sklearn.ensemble import ExtraTreesRegressor
                 params = {
                     "n_estimators": iterative_config.get("estimator_n_estimators", 70),
                     "random_state": SEED,
@@ -63,12 +62,9 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
                 params.update(estimator_params)
                 estimator = ExtraTreesRegressor(**params)
             elif estimator_name == "BayesianRidge":
-                from sklearn.linear_model import BayesianRidge
-                params = {"random_state": SEED}
-                params.update(estimator_params)
-                estimator = BayesianRidge(**params)
+                estimator = BayesianRidge()
             elif estimator_name == "HistGradientBoosting":
-                from sklearn.ensemble import HistGradientBoostingRegressor
+                
                 params = {"random_state": SEED}
                 params.update(estimator_params)
                 estimator = HistGradientBoostingRegressor(**params)
@@ -251,6 +247,7 @@ def supervised_monocyte_imputation(
             # Mild winsorization to limit extremes
             pct = 99.5 if winsorize_pct is None else float(winsorize_pct)
             y_pred = np.clip(y_pred, 0.0, np.nanpercentile(y_pred, pct))
+            y_pred = y_pred.astype("float32", copy=False)
             out.loc[miss_mask, "MONOCYTES"] = y_pred
         if keep_indicator:
             out["MONOCYTES_missing"] = df["MONOCYTES"].isna().astype(int)

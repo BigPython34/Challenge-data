@@ -80,7 +80,7 @@ class ClinicalFeatureEngineering:
         """Crée des scores composites basés sur la configuration."""
         df_copy = df.copy()
 
-        # Gérer les scores basés sur la somme des composants
+
         for score_name, config in CLINICAL_COMPOSITE_SCORES.items():
             if "components" in config:
                 component_cols = config["components"]
@@ -92,7 +92,7 @@ class ClinicalFeatureEngineering:
                     missing_cols = [c for c in component_cols if c not in df_copy.columns]
                     print(f"Avertissement : Colonnes manquantes pour le score '{score_name}': {missing_cols}")
 
-        # Gérer les scores basés sur un seuil d'un autre score
+
         for score_name, config in CLINICAL_COMPOSITE_SCORES.items():
             if "score_col" in config:
                 source_col = config["score_col"]
@@ -152,8 +152,8 @@ class CytogeneticFeatureExtraction:
                 continue
         return counts
 
-    # Les méthodes _find_specific_abnormalities, _classify_risk, _process_clone,
-    # et _parse_and_count_all_clones sont supprimées car nous utilisons 
+
+
     # la version originale _parse_and_count_all_clones_original.
 
 
@@ -164,7 +164,7 @@ class CytogeneticFeatureExtraction:
 
         cyto_string_series = df["CYTOGENETICS"]
         
-        # Utiliser la fonction de parsing originale qui a été validée
+
         parsed_data = cyto_string_series.apply(
             CytogeneticFeatureExtraction._parse_and_count_all_clones_original
         )
@@ -192,7 +192,7 @@ class CytogeneticFeatureExtraction:
         result_df["SEX_XY"] = (result_df["sex_chromosomes"] == 1).astype(int)
         result_df["SEX_UNKNOWN"] = result_df["sex_chromosomes"].isna().astype(int)
 
-        # Utiliser les patterns de config pour les flags spécifiques
+
         for name, pattern in SPECIFIC_ABNORMALITIES_TO_FLAG.items():
             result_df[name] = cyto_string_series.str.contains(
                 pattern, case=False, na=False, regex=True
@@ -210,7 +210,7 @@ class CytogeneticFeatureExtraction:
             has_normal_clone & (result_df["num_cyto_abnormalities"] == 0)
         ).astype(int)
 
-        # Recréation des features composites comme del_5q, monosomy_7
+
         result_df["del_5q"] = result_df.get("del_5q_or_mono5", 0)
         result_df["monosomy_7"] = result_df.get("monosomy_7_or_del7q", 0)
         result_df["del_17p"] = result_df.get("del_17p_or_i17q", 0)
@@ -263,7 +263,7 @@ class CytogeneticFeatureExtraction:
             favorable_pattern, case=False, na=False, regex=True
         ).astype(int)
 
-        label = pd.Series(1, index=df.index) # Intermediate par défaut
+        label = pd.Series(1, index=df.index)
         label = label.mask(favorable_final == 1, 0) # Favorable
         label = label.mask(adverse_final == 1, 2) # Adverse
 
@@ -280,7 +280,7 @@ class CytogeneticFeatureExtraction:
     
     @staticmethod
     def _parse_and_count_all_clones_original(cyto_string: str) -> Dict:
-        # Cette fonction est une copie de la logique originale validée
+
         default_counts = {k: 0 for k in CYTOGENETIC_EVENT_PATTERNS.keys()}
         default_output = {
             **default_counts, "has_idem": 0, "clone_count": 0, "total_cell_count": 0,
@@ -347,4 +347,3 @@ class CytogeneticFeatureExtraction:
             "total_cell_count": total_cells, "main_clone_cell_count": main_cell_clone["cell_count"],
             "main_clone_abnormality_count": main_cell_clone["abn_count"], "num_cyto_abnormalities": avg_abnormalities,
         }
-

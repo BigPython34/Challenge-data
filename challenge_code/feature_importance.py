@@ -10,7 +10,7 @@ import seaborn as sns
 import os
 from sklearn.inspection import permutation_importance
 
-# --- Importations spécifiques à scikit-survival ---
+
 from sksurv.ensemble import (
     RandomSurvivalForest,
     GradientBoostingSurvivalAnalysis,
@@ -22,21 +22,21 @@ from sksurv.util import Surv
 # 1. CONFIGURATION
 # ==============================================================================
 
-# --- MODIFIEZ CES CHEMINS SI NÉCESSAIRE ---
-# Répertoire contenant vos données finales (prunées ou processées)
+
+
 INPUT_DIR = (
-    "datasets_processed"  # Ou "datasets_processed" si vous n'exécutez pas le pruning
+    "datasets_processed"
 )
 
 X_TRAIN_FILENAME = "X_train_processed.csv"
 Y_TRAIN_FILENAME = "y_train_processed.csv"
 
-# Répertoire où les graphiques seront sauvegardés
+
 OUTPUT_DIR = "reports/feature_importance"
 # --------------------------------------------------
 
-# --- PARAMÈTRES ---
-# Colonnes à ne PAS considérer comme des features
+
+
 ID_COLUMN = "ID"
 GROUP_COLUMN = "CENTER_GROUP"
 
@@ -44,10 +44,10 @@ GROUP_COLUMN = "CENTER_GROUP"
 EVENT_STATUS_COL = "OS_STATUS"
 EVENT_TIME_COL = "OS_YEARS"
 
-# Modèles à exécuter ('rsf' et/ou 'gbsa')
+
 MODELS_TO_RUN = ["rsf"]
 
-# Nombre de features à afficher dans le graphique
+
 N_TOP_FEATURES = 150
 
 
@@ -83,7 +83,7 @@ def plot_feature_importance(importances: pd.Series, model_name: str, output_dir:
 
 def plot_cox_coefficients(coefficients: pd.Series, output_dir: str):
     """Génère un graphique spécifique pour les coefficients du modèle de Cox."""
-    # Séparer les coefficients positifs (mauvais pronostic) et négatifs (bon pronostic)
+
     pos_coefs = (
         coefficients[coefficients > 0]
         .sort_values(ascending=False)
@@ -95,7 +95,7 @@ def plot_cox_coefficients(coefficients: pd.Series, output_dir: str):
         .head(N_TOP_FEATURES // 2)
     )
 
-    # Concaténer les deux pour l'affichage
+
     plot_data = pd.concat([pos_coefs, neg_coefs]).sort_values(ascending=False)
 
     colors = ["red" if c > 0 else "blue" for c in plot_data.values]
@@ -122,7 +122,7 @@ def plot_cox_coefficients(coefficients: pd.Series, output_dir: str):
 
 
 def main():
-    # ... (Chargement et préparation des données inchangés)
+
     print("=" * 60)
     print("ÉTAPE 1: CHARGEMENT DES DONNÉES")
     print("=" * 60)
@@ -141,7 +141,7 @@ def main():
     y_structured = Surv.from_dataframe(EVENT_STATUS_COL, EVENT_TIME_COL, y_df)
     print(f"Préparation terminée. {X_features.shape[1]} features prêtes.")
 
-    # --- Entraînement et Analyse par Modèle ---
+
     for model_name in MODELS_TO_RUN:
         print("\n" + "=" * 60)
         print(f"ÉTAPE 3: ANALYSE AVEC LE MODÈLE {model_name.upper()}")
@@ -150,10 +150,10 @@ def main():
         model = None  # Initialisation
         if model_name == "rsf":
             model = RandomSurvivalForest(
-                n_estimators=100,  # <-- Réduit pour un calcul plus rapide
+                n_estimators=100,
                 min_samples_split=15,
                 min_samples_leaf=20,
-                n_jobs=-1,  # On garde la parallélisation pour l'entraînement
+                n_jobs=-1,
                 random_state=42,
             )
         elif model_name == "gbsa":
@@ -172,7 +172,7 @@ def main():
         X_fit = X_cox if model_name == "cox" else X_features
         model.fit(X_fit, y_structured)
 
-        # --- LOGIQUE D'IMPORTANCE SPÉCIFIQUE PAR MODÈLE ---
+
         if model_name == "rsf":
             print("Calcul de l'importance par permutation pour RSF... (peut être long)")
             perm_result = permutation_importance(
@@ -198,7 +198,7 @@ def main():
             print(f"\n--- TOP FEATURES (par magnitude) POUR LE MODÈLE COX ---")
             print(sorted_importances.head(N_TOP_FEATURES))
             plot_cox_coefficients(importance_series, OUTPUT_DIR)
-            continue  # Passe au prochain modèle
+            continue
 
         # Affichage et plotting pour RSF et GBSA
         sorted_importances = importance_series.sort_values(ascending=False)

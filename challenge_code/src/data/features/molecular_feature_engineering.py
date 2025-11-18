@@ -83,7 +83,7 @@ class MolecularFeatureExtraction:
         )
 
         # === PATHWAY-LEVEL ALTERATIONS ===
-        # ON PASSE MAINTENANT le `maf_df` complet pour utiliser tous les gènes
+
         molecular_df = MolecularFeatureExtraction._extract_pathway_alterations(
             molecular_df, maf_df
         )
@@ -167,7 +167,7 @@ class MolecularFeatureExtraction:
                 thr = vaf_thresholds[gene]
                 high = molecular_df[f"vaf_max_{gene}"] >= thr
 
-                # Logique spécifique pour FLT3-ITD
+
                 if gene == "FLT3" and effect_col in gene_rows.columns:
                     itd_pattern = MUTATION_TYPE_PATTERNS.get("FLT3_ITD", {}).get("pattern", "ITD|internal tandem duplication")
                     itd_ids = set(
@@ -234,7 +234,7 @@ class MolecularFeatureExtraction:
                 required_mut_cols = [f"mut_{g}" for g in genes]
                 
                 if all(col in df_out.columns for col in required_mut_cols):
-                    # Crée une condition pour chaque gène et son état attendu (présent/absent)
+
                     conditions = []
                     for i, gene in enumerate(genes):
                         is_mutated = details.get("status", [1]*len(genes))[i] == 1
@@ -265,7 +265,7 @@ class MolecularFeatureExtraction:
                     num_vaf = df_out[num_vaf_col]
                     den_vaf = df_out[den_vaf_col]
                     
-                    # Le ratio n'est calculé que si les deux mutations sont présentes
+
                     df_out[feature_name] = (num_vaf / (den_vaf + 1e-6)).where(
                         (den_vaf > 0) & (num_vaf > 0), 0
                     )
@@ -295,13 +295,13 @@ class MolecularFeatureExtraction:
                     df_out[col_name] = df_out["ID"].isin(altered_ids).astype(int)
                     pathway_altered_cols.append(
                         col_name
-                    )  # On garde en mémoire le nom de la colonne
+                    )
 
                 if toggles.get("count", False):
                     pathway_counts = pathway_maf.groupby("ID").size()
                     df_out[f"{pathway_name}_count"] = df_out["ID"].map(pathway_counts)
 
-        # --- NOUVEAU: Score de Diversité des Pathways ---
+
         if pathway_altered_cols:
             df_out["pathway_diversity_score"] = df_out[pathway_altered_cols].sum(axis=1)
 
@@ -391,7 +391,7 @@ class MolecularFeatureExtraction:
 
     @staticmethod
     def get_favorable_molecular_mask(molecular_df: pd.DataFrame) -> pd.Series:
-        # VOTRE CODE ORIGINAL EST CONSERVÉ INTÉGRALEMENT
+
         favorable_conditions = []
         if "mut_NPM1" in molecular_df.columns:
             npm1_favorable = (molecular_df["mut_NPM1"] == 1) & (
@@ -408,7 +408,7 @@ class MolecularFeatureExtraction:
 
     @staticmethod
     def get_adverse_molecular_mask(molecular_df: pd.DataFrame) -> pd.Series:
-        # VOTRE CODE ORIGINAL EST CONSERVÉ INTÉGRALEMENT
+
         adverse_conditions = []
         adverse_genes = ["TP53", "ASXL1", "RUNX1", "BCOR", "EZH2"]
         for gene in adverse_genes:
@@ -437,14 +437,14 @@ class MolecularFeatureExtraction:
     def create_all_molecular_features(
         base_df: pd.DataFrame,
         maf_df: pd.DataFrame,
-        important_genes: List[str],  # <--- ACCEPTE MAINTENANT LA LISTE PRÉ-CALCULÉE
+        important_genes: List[str],
         external_data_manager: ExternalDataManager,
     ) -> pd.DataFrame:
         """
         Orchestrateur qui crée toutes les features pour un jeu de données donné (train ou test)
         en utilisant une liste de gènes fixe pour garantir la cohérence.
         """
-        # --- Étape 1: Enrichissement du MAF ---
+
         if not external_data_manager.gene_info_data.empty:
             maf_df = maf_df.merge(
                 external_data_manager.get_gene_info(),
@@ -479,7 +479,7 @@ class MolecularFeatureExtraction:
                 external_features["num_tsg_muts"].fillna(0) > 0
             ).astype(int)
 
-        # Agrégations génériques sur les colonnes COSMIC/MOLGEN si présentes
+
         cosmic_bool_cols = [
             c
             for c in maf_df.columns
@@ -502,7 +502,7 @@ class MolecularFeatureExtraction:
 
         # ------------------------------------------------------------------
         # Robust COSMIC counts aggregation (guarantee presence of *_count cols)
-        # We aggregate directly from the maf_df (qui a été enrichi avec
+
         # gene_info via external_data_manager) to avoid relying on earlier
         # selections that may have filtered numeric types.
         try:

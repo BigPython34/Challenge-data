@@ -1,9 +1,0 @@
-{
-  "chosen_models": [
-    "ComponentwiseGB",
-    "ExtraTrees",
-    "GradientBoosting",
-    "RSF"
-  ],
-  "timestamp": "20250916_234103"
-}

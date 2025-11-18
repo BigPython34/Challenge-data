@@ -104,7 +104,7 @@ class CytoMolecularInteractionFeatures:
         df_out = df.copy()
         print("[FE Inter] Création des features d'interaction cyto-moléculaires...")
         
-        # --- Interaction 1 : Caryotype Normal stratifié par le profil moléculaire ---
+
         config_fav = FEATURE_INTERACTIONS.get("cyto_normal_mol_favorable", {})
         if config_fav.get("enabled") and config_fav.get("base_col") in df_out.columns:
             base_col = config_fav["base_col"]
@@ -129,7 +129,7 @@ class CytoMolecularInteractionFeatures:
                 is_bad_mol = (df_out[adverse_cols].sum(axis=1) > 0)
                 df_out["cyto_normal_mol_adverse"] = ((df_out[base_col] == 1) & is_bad_mol).astype(int)
 
-        # --- Interaction 3 : Caryotype Favorable "annulé" par une mutation défavorable ---
+
         config_kit = FEATURE_INTERACTIONS.get("cyto_favorable_mol_adverse_kit", {})
         if config_kit.get("enabled") and config_kit.get("base_col") in df_out.columns:
             base_col = config_kit["base_col"]

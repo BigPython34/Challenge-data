@@ -47,7 +47,7 @@ def run_comprehensive_data_discovery(
     print("  EXPLORATION AGNOSTIQUE DES DONNÉES (config facultative)")
     print("=" * 60)
 
-    # === PARTIE 1 : MOLÉCULAIRE (agnostique) ===
+
     print("\n--- PARTIE 1: MOLÉCULAIRE ---")
     try:
         mol_df = pd.read_csv(molecular_path, low_memory=False)
@@ -87,7 +87,7 @@ def run_comprehensive_data_discovery(
     except FileNotFoundError:
         print(f"[MOL] Fichier introuvable: {molecular_path}")
 
-    # === PARTIE 2 : CYTOGÉNÉTIQUE (agnostique) ===
+
     print("\n--- PARTIE 2: CYTOGÉNÉTIQUE ---")
     try:
         clin_df = pd.read_csv(clinical_path, low_memory=False)
@@ -107,7 +107,7 @@ def run_comprehensive_data_discovery(
             )
             print("[CYTO] Export: cyto_token_counts.csv (tokens bruts)")
 
-            # Comptes structurés (regex)
+
             patterns = {
                 "t_translocation": r"t\(\d+;\d+\)",
                 "del_any": r"del\(.*?\)",
@@ -131,7 +131,7 @@ def run_comprehensive_data_discovery(
             )
             print("[CYTO] Export: cyto_pattern_counts.csv (patterns structurés)")
 
-            # Numériques: monosomies et trisomies
+
             monos = Counter()
             tris = Counter()
             for s in cyto_lower:
@@ -153,7 +153,7 @@ def run_comprehensive_data_discovery(
                 "[CYTO] Export: cyto_monosomies_counts.csv / cyto_trisomies_counts.csv"
             )
 
-            # Échantillons d'intérêt (dic/idem)
+
             interest_mask = cyto_lower.str.contains(r"\bdic\(|\bidem\b", regex=True)
             cyto[interest_mask].head(50).to_csv(
                 os.path.join(out_dir, "cyto_samples_dic_idem_head50.txt"),
@@ -161,7 +161,7 @@ def run_comprehensive_data_discovery(
                 header=False,
             )
 
-            # Synthèse JSON + suggestions config (strictement data-driven)
+
             summary = {
                 "n_rows_with_idem": int(patt_counts.get("idem", 0)),
                 "n_rows_with_dic": int(patt_counts.get("dic_any", 0)),

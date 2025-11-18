@@ -15,7 +15,7 @@ import warnings
 try:
     from ..config import SEED, MODEL_DIR
 except ImportError:
-    # Fallback si import relatif échoue
+
     import sys
     import os
 
@@ -111,7 +111,7 @@ def resume_or_start_rsf_optimization(
         )
 
 
-# TAU pour le calcul du C-index - FIXÉ SELON LES CRITÈRES DU CHALLENGE
+
 TAU = 7  # Valeur fixe pour le challenge
 
 

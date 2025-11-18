@@ -4,12 +4,12 @@ print("===== FEATURE SANITY CHECK REPORT =====")
 
 import pandas as pd
 
-# Créer une liste pour stocker les résultats
+
 
 
 # === Rapport pour X_train_processed.csv ===
 def feature_sanity_report(final_df, dataset_name=""):
-    # Afficher le nombre de patients par centre à partir des colonnes one-hot CENTER_xxx
+
     # Only consider one-hot encoded center columns (numeric), exclude the string group label
     import pandas.api.types as ptypes
 
@@ -38,7 +38,7 @@ def feature_sanity_report(final_df, dataset_name=""):
         s = final_df[col]
         stats = {"feature": col, "dtype": s.dtype}
 
-        # Petites cardinalités → distribution
+
         if s.nunique(dropna=False) < 10:
             counts = s.value_counts(normalize=True, dropna=False)
             stats["value_counts (%)"] = {k: f"{v:.2%}" for k, v in counts.items()}
@@ -47,13 +47,13 @@ def feature_sanity_report(final_df, dataset_name=""):
         else:
             if ptypes.is_numeric_dtype(s):
                 desc = s.describe()
-                # Sécuriser au cas où
+
                 stats["mean"] = f"{float(desc.get('mean', 0)):.2f}"
                 stats["std"] = f"{float(desc.get('std', 0)):.2f}"
                 stats["min"] = f"{float(desc.get('min', 0)):.2f}"
                 stats["max"] = f"{float(desc.get('max', 0)):.2f}"
             else:
-                # Catégoriel haute cardinalité → top 5 catégories
+
                 top = s.astype(str).value_counts(dropna=False).head(5)
                 stats["top_values"] = top.to_dict()
 
@@ -62,7 +62,7 @@ def feature_sanity_report(final_df, dataset_name=""):
 
     report_df = pd.DataFrame(feature_stats)
 
-    # Afficher le rapport de manière lisible
+
     print(f"\n===== FEATURE SANITY CHECK REPORT [{dataset_name}] =====")
     with pd.option_context(
         "display.max_rows", None, "display.max_columns", None, "display.width", 1000

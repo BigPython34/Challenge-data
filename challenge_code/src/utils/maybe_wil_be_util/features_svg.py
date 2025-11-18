@@ -475,7 +475,7 @@ def create_molecular_burden_features(maf_df: pd.DataFrame) -> pd.DataFrame:
     # Remplir les NaN dans std par 0 (un seul variant)
     vaf_stats["vaf_std"] = vaf_stats["vaf_std"].fillna(0)
 
-    # Proportion de mutations à VAF élevée (>0.4, possibles mutations germinales)
+
     high_vaf_counts = (
         maf_df[maf_df["VAF"] > 0.4]
         .groupby("ID")
@@ -490,7 +490,7 @@ def create_molecular_burden_features(maf_df: pd.DataFrame) -> pd.DataFrame:
         burden_df["high_vaf_mutations"].fillna(0).astype(int)
     )
 
-    # Ratio de mutations à VAF élevée
+
     burden_df["high_vaf_ratio"] = (
         burden_df["high_vaf_mutations"] / burden_df["total_mutations"]
     )
@@ -521,7 +521,7 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== FEATURES DE BASE (nettoyage) =====
 
-    # Assurer que les valeurs sont numériques
+
     numeric_columns = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
     for col in numeric_columns:
         if col in clinical_df.columns:
@@ -535,13 +535,13 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
         [np.inf, -np.inf], np.nan
     )
 
-    # Ratio monocytes/globules blancs (élévation = pronostic défavorable)
+
     clinical_df["monocyte_ratio"] = clinical_df["MONOCYTES"] / clinical_df["WBC"]
     clinical_df["monocyte_ratio"] = clinical_df["monocyte_ratio"].replace(
         [np.inf, -np.inf], np.nan
     )
 
-    # Ratio plaquettes/globules blancs (mesure générale de l'hématopoïèse)
+
     clinical_df["platelet_wbc_ratio"] = clinical_df["PLT"] / clinical_df["WBC"]
     clinical_df["platelet_wbc_ratio"] = clinical_df["platelet_wbc_ratio"].replace(
         [np.inf, -np.inf], np.nan
@@ -549,44 +549,44 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== SEUILS CLINIQUES (binaires) =====
 
-    # Anémie (HB < 10 g/dL = modérée, < 8 g/dL = sévère)
+
     clinical_df["anemia_moderate"] = (clinical_df["HB"] < 10).astype(int)
     clinical_df["anemia_severe"] = (clinical_df["HB"] < 8).astype(int)
 
-    # Thrombocytopénie (PLT < 100 = modérée, < 50 = sévère)
+
     clinical_df["thrombocytopenia_moderate"] = (clinical_df["PLT"] < 100).astype(int)
     clinical_df["thrombocytopenia_severe"] = (clinical_df["PLT"] < 50).astype(int)
 
-    # Neutropénie (ANC < 1.5 = modérée, < 1.0 = sévère)
+
     clinical_df["neutropenia_moderate"] = (clinical_df["ANC"] < 1.5).astype(int)
     clinical_df["neutropenia_severe"] = (clinical_df["ANC"] < 1.0).astype(int)
 
-    # Leucocytose (WBC > 30 = élevée)
+
     clinical_df["leukocytosis_high"] = (clinical_df["WBC"] > 30).astype(int)
 
-    # Blastose médullaire élevée (>20% = LMA)
+
     clinical_df["high_blast_count"] = (clinical_df["BM_BLAST"] > 20).astype(int)
 
     # ===== SCORES COMPOSITES CLINIQUES =====
 
-    # Score de cytopénie (0-3, basé sur anémie + thrombocytopénie + neutropénie)
+
     clinical_df["cytopenia_score"] = (
         clinical_df["anemia_moderate"]
         + clinical_df["thrombocytopenia_moderate"]
         + clinical_df["neutropenia_moderate"]
     )
 
-    # Pancytopénie (toutes les lignées affectées)
+
     clinical_df["pancytopenia"] = (clinical_df["cytopenia_score"] == 3).astype(int)
 
-    # Score de prolifération (blastose + leucocytose)
+
     clinical_df["proliferation_score"] = (
         clinical_df["high_blast_count"] + clinical_df["leukocytosis_high"]
     )
 
-    # ===== TRANSFORMATIONS LOG (pour distributions asymétriques) =====
 
-    # Log transformation pour les variables très asymétriques
+
+
     for col in ["WBC", "PLT", "ANC", "MONOCYTES"]:
         if col in clinical_df.columns:
             clinical_df[f"log_{col}"] = np.log1p(clinical_df[col].fillna(0))
@@ -594,7 +594,7 @@ def create_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
     # ===== RATIOS ADDITIONNELS =====
     clinical_df["blast_platelet_ratio"] = clinical_df["BM_BLAST"] / clinical_df["PLT"]
 
-    # Gérer les infinis
+
     clinical_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     return clinical_df

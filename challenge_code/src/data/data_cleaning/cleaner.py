@@ -39,7 +39,7 @@ class ClipQuantiles(BaseEstimator, TransformerMixin):
         """Applique le clipping tout en garantissant la préservation de l'index."""
         return X.clip(lower=self.lower_bounds_, upper=self.upper_bounds_, axis=1)
 
-    # --- AJOUT CRUCIAL POUR LA COMPATIBILITÉ ---
+
     def set_output(self, transform=None):
         """
         Méthode requise par scikit-learn pour gérer la configuration de la sortie.
@@ -184,17 +184,17 @@ def _clean_molecular_data(
     molecular_clean["VAF"] = pd.to_numeric(molecular_clean["VAF"], errors="coerce")
     molecular_clean["DEPTH"] = pd.to_numeric(molecular_clean["DEPTH"], errors="coerce")
 
-    # --- LOGIQUE DE FILTRAGE AMÉLIORÉE ---
 
-    # Critère 1: Mutations de haute qualité (avec VAF et DEPTH valides)
+
+
     high_quality_mutations = (
         (molecular_clean["VAF"] >= 0)
         & (molecular_clean["VAF"] <= 1)
         & (molecular_clean["DEPTH"] >= 10)
     )
 
-    # Critère 2: Mutations cliniquement cruciales qui doivent être conservées
-    # même si certaines métriques de qualité sont manquantes.
+
+
     # On identifie les FLT3_ITD par la colonne 'EFFECT' ou 'PROTEIN_CHANGE'.
     is_flt3_itd = (molecular_clean["EFFECT"].astype(str).str.upper() == "ITD") | (
         molecular_clean["PROTEIN_CHANGE"]
@@ -202,8 +202,8 @@ def _clean_molecular_data(
         .str.contains("ITD", na=False, case=False)
     )
 
-    # Préserver également les événements MLL/KMT2A de type PTD (Partial Tandem Duplication),
-    # souvent rapportés sans DEPTH complet mais cliniquement importants.
+
+
     gene_str = molecular_clean["GENE"].astype(str).str.upper()
     effect_str = molecular_clean["EFFECT"].astype(str).str.upper()
     protein_str = molecular_clean["PROTEIN_CHANGE"].astype(str).str.upper()
@@ -213,10 +213,10 @@ def _clean_molecular_data(
     )
     is_mll_ptd = is_mll_gene & has_ptd
 
-    # Une mutation est valide si elle est de haute qualité OU si c'est un FLT3_ITD
+
     valid_mutations = high_quality_mutations | is_flt3_itd | is_mll_ptd
 
-    # Compter uniquement les mutations supprimées qui n'étaient PAS des FLT3_ITD
+
     removed_count = (~high_quality_mutations & ~is_flt3_itd & ~is_mll_ptd).sum()
 
     if removed_count > 0:

@@ -38,14 +38,14 @@ def main():
         print(f"ERREUR lors du chargement : {e}")
         return
 
-    # Extraction des données
+
     X_train = dataset["X_train"]
     y_train = dataset["y_train"]
 
     # 2. Configuration de l'optimisation
     print("\n2. Configuration de l'optimisation RSF intensive...")
-    n_trials = 300  # Optimisation très intensive pour RSF
-    n_splits = 5  # Validation croisée 5-fold
+    n_trials = 300
+    n_splits = 5
 
     print(f"   Nombre d'essais RSF : {n_trials}")
     print(f"   Validation croisée : {n_splits} folds")

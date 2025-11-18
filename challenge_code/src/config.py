@@ -1,33 +1,41 @@
 import os
+from pathlib import Path
+from types import MappingProxyType
+
 SEED = 42
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # challenge_code/
-DATA_DIR = os.path.join(BASE_DIR, "datas")
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-RESULTS_DIR = os.path.join(BASE_DIR, "results")
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "datas"
+MODEL_DIR = BASE_DIR / "models"
+RESULTS_DIR = BASE_DIR / "results"
 
 
-DATA_PATHS = {
-    "input_clinical_train": os.path.join(DATA_DIR, "X_train", "clinical_train.csv"),
-    "input_molecular_train": os.path.join(DATA_DIR, "X_train", "molecular_train_filled.csv"),
-    "input_target_train": os.path.join(DATA_DIR, "target_train.csv"),
-    "input_clinical_test": os.path.join(DATA_DIR, "X_test", "clinical_test.csv"),
-    "input_molecular_test": os.path.join(DATA_DIR, "X_test", "molecular_test_filled.csv"),
-    "output_dir": os.path.join(BASE_DIR, "datasets_processed"),
-    "oncokb_file": os.path.join(DATA_DIR, "external", "cancerGeneList.txt"),
-    "cosmic_file": os.path.join(DATA_DIR, "external", "Cosmic_CancerGeneCensus_v102_GRCh38.tsv"),
-}
+def _build_data_paths(base_dir: Path) -> dict[str, str]:
+    data_dir = base_dir / "datas"
+    return {
+        "input_clinical_train": str(data_dir / "X_train" / "clinical_train.csv"),
+        "input_molecular_train": str(data_dir / "X_train" / "molecular_train_filled.csv"),
+        "input_target_train": str(data_dir / "target_train.csv"),
+        "input_clinical_test": str(data_dir / "X_test" / "clinical_test.csv"),
+        "input_molecular_test": str(data_dir / "X_test" / "molecular_test_filled.csv"),
+        "output_dir": str(base_dir / "datasets_processed"),
+        "oncokb_file": str(data_dir / "external" / "cancerGeneList.txt"),
+        "cosmic_file": str(data_dir / "external" / "Cosmic_CancerGeneCensus_v102_GRCh38.tsv"),
+    }
+
+
+DATA_PATHS = _build_data_paths(BASE_DIR)
 
 TARGET_COLUMNS = {
     "status": "OS_STATUS",
     "time": "OS_YEARS",
 }
 
+# Clinical configuration
 ID_COLUMNS = {
     "patient": "ID",
     "center": "CENTER",
 }
 
-### clinical 
 CLINICAL_RANGES = {
     "BM_BLAST": (0, 100),
     "WBC": (0, 400),
@@ -47,7 +55,6 @@ CLINICAL_RATIOS = {
     "blast_platelet_ratio": ("BM_BLAST", "PLT"),
 }
 CLINICAL_THRESHOLDS = {
-    # feature_name: (column, operator, threshold)
     "anemia_moderate": ("HB", "<", 10),
     "anemia_severe": ("HB", "<", 8),
     "thrombocytopenia_moderate": ("PLT", "<", 100),
@@ -72,18 +79,18 @@ CENTER_GROUPING = {
 }
 
 
-###cytogenetic
+# Cytogenetic configuration
 SPECIFIC_ABNORMALITIES_TO_FLAG = {
-            "trisomy_8": r"\+\s*8(?![0-9])|\btris(omy|omia)?\s*8(?![0-9])",
-            "t_9_11": r"t\s*\(\s*9\s*;\s*11\s*\)",
-            "minus_Y": r"\bminus_y\b|-\s*y(?![a-zA-Z0-9])|\bdely\b",
-            "plus_21": r"\+\s*21(?![0-9])|\btris(omy|omia)?\s*21(?![0-9])",
-            "del_5q_or_mono5": r"-\s*5(?![0-9])|\b(mono|del)\w*\s*5|\bdel\s*\(\s*5\s*\)\s*\(q",
-            "monosomy_7_or_del7q": r"-\s*7(?![0-9])|\b(mono|del)\w*\s*7|\bdel\s*\(\s*7\s*\)\s*\(q",
-            "del_17p_or_i17q": r"del\s*\(\s*17\s*\)\s*\(p|i\s*\(\s*17\s*\)\s*\(q|17p-",
-            "rearr_3q26": r"inv\(3\).*q26|t\(3;.*\).*q26|t\(.*;3\).*q26",
-            "del_12p": r"del\s*\(\s*12\s*\)\s*\(p",
-        }
+    "trisomy_8": r"\+\s*8(?![0-9])|\btris(omy|omia)?\s*8(?![0-9])",
+    "t_9_11": r"t\s*\(\s*9\s*;\s*11\s*\)",
+    "minus_Y": r"\bminus_y\b|-\s*y(?![a-zA-Z0-9])|\bdely\b",
+    "plus_21": r"\+\s*21(?![0-9])|\btris(omy|omia)?\s*21(?![0-9])",
+    "del_5q_or_mono5": r"-\s*5(?![0-9])|\b(mono|del)\w*\s*5|\bdel\s*\(\s*5\s*\)\s*\(q",
+    "monosomy_7_or_del7q": r"-\s*7(?![0-9])|\b(mono|del)\w*\s*7|\bdel\s*\(\s*7\s*\)\s*\(q",
+    "del_17p_or_i17q": r"del\s*\(\s*17\s*\)\s*\(p|i\s*\(\s*17\s*\)\s*\(q|17p-",
+    "rearr_3q26": r"inv\(3\).*q26|t\(3;.*\).*q26|t\(.*;3\).*q26",
+    "del_12p": r"del\s*\(\s*12\s*\)\s*\(p",
+}
 
 CYTOGENETIC_COMMON_MONOSOMIES = [
     r"-7\b",
@@ -286,13 +293,18 @@ PREPROCESSING = {
     "imputer": "iterative",
     "knn": {"n_neighbors": 4},
     "iterative": {
-        "max_iter": 200,
-        "estimator": "RandomForest",
-        "estimator_n_estimators": 200,
+        "max_iter": 100,
+        "estimator": "BayesianRidge",
+        "estimator_n_estimators": 250,
         "random_state": SEED,
-    "HistGradientBoosting":{
-        "max_iter":50
-    }
+    },
+    "early_imputation": {
+        "enabled": False,
+        "strategy": "iterative",
+        "columns": CLINICAL_NUMERIC_COLUMNS,
+        "respect_ranges": True,
+        "range_map": CLINICAL_RANGES,
+        "artifact_path": os.path.join(MODEL_DIR, "early_continuous_imputer.joblib"),
     },
    
     "monocyte_imputer": {
@@ -322,13 +334,40 @@ PREPROCESSING = {
     "drop_zero_variance": True,
     "auto_detect_continuous_features": False,
     "continuous_threshold": 20,
-    "continuous_features": [
-    'BM_BLAST', 'WBC', 'ANC', 'MONOCYTES', 'HB', 'PLT',
-    'neutrophil_ratio', 'monocyte_ratio', 'platelet_wbc_ratio', 'blast_platelet_ratio',
-    'vaf_max_TP53', 'vaf_max_FLT3', 'vaf_max_NPM1', 'vaf_max_CEBPA', 'vaf_max_DNMT3A',
-    'vaf_mean', 'vaf_median', 'vaf_max', 'vaf_std', 'high_vaf_ratio',
-    'max_cadd_score', 'mean_cadd_score', 'max_gerp_score'
-]
+    "continuous_features": CLINICAL_NUMERIC_COLUMNS
+    + [
+        "neutrophil_ratio",
+        "monocyte_ratio",
+        "platelet_wbc_ratio",
+        "blast_platelet_ratio",
+        "vaf_max_TP53",
+        "vaf_max_FLT3",
+        "vaf_max_NPM1",
+        "vaf_max_CEBPA",
+        "vaf_max_DNMT3A",
+        "vaf_mean",
+        "vaf_median",
+        "vaf_max",
+        "vaf_std",
+        "high_vaf_ratio",
+        "max_cadd_score",
+        "mean_cadd_score",
+        "max_gerp_score",
+    ],
+}
+
+FLOAT32_POLICY = {
+    "enabled": True,
+    "columns": CLINICAL_NUMERIC_COLUMNS,
+    "auto_detect_feature_frames": True,
+    "auto_detect_processed_frames": True,
+    "protected_columns": [
+        ID_COLUMNS["patient"],
+        ID_COLUMNS["center"],
+        TARGET_COLUMNS["status"],
+        TARGET_COLUMNS["time"],
+        "CENTER_GROUP",
+    ],
 }
 
 EXPERIMENT = {
@@ -593,7 +632,7 @@ COMUTATION_PATTERNS = {
     "NPM1_pos_FLT3_neg": {
         "type": "co_occurrence",
         "genes": ["NPM1", "FLT3"],
-        "status": [1, 0], # NPM1 muté, FLT3 non muté
+        "status": [1, 0],
     },
     "double_hit_spliceosome": {
         "type": "multi_hit",

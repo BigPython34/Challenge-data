@@ -36,7 +36,7 @@ class MyVariantFetcher:
 
         def make_id(row):
             try:
-                # Gérer le cas où CHR est 'X', 'Y', 'M' etc.
+
                 chr_val = str(row["CHR"]).replace("chr", "")
                 return f"chr{chr_val}:g.{int(row['START'])}{row['REF']}>{row['ALT']}"
             except (ValueError, TypeError):
@@ -53,7 +53,7 @@ class MyVariantFetcher:
             for attempt in range(self.retries):
                 try:
                     async with session.get(url) as response:
-                        response.raise_for_status()  # Lève une exception pour les erreurs 4xx/5xx
+                        response.raise_for_status()
                         data = await response.json()
                         return {vid: data}
                 except (
@@ -65,12 +65,12 @@ class MyVariantFetcher:
                         f"  [AVERTISSEMENT] Échec pour {vid} (essai {attempt+1}/{self.retries}): {e}"
                     )
                     if attempt < self.retries - 1:
-                        await asyncio.sleep(1 + attempt)  # Délai exponentiel simple
+                        await asyncio.sleep(1 + attempt)
                     else:
                         print(
                             f"  [ERREUR] Échec final pour {vid} après {self.retries} essais."
                         )
-                        return {vid: None}  # Retourner None en cas d'échec final
+                        return {vid: None}
 
     async def _fetch_all_and_save(self, variant_ids: Set[str], output_path: str):
         """Orchestre la récupération de tous les variants et sauvegarde en .jsonl."""
@@ -97,7 +97,7 @@ class MyVariantFetcher:
         if not variant_ids:
             return
 
-        # Lancer la boucle d'événements asynchrone
+
         asyncio.run(self._fetch_all_and_save(variant_ids, output_path))
         print(
             f"\n✓ Récupération terminée. Données brutes sauvegardées dans : {output_path}"

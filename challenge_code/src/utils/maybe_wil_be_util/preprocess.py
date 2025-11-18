@@ -248,21 +248,21 @@ def impute_sex(X_train, X_test, X_eval, columns):
     Returns:
         tuple: (X_train, X_test, X_eval) mis à jour avec la colonne 'sex' imputée.
     """
-    # On agrège temporairement les trois datasets pour disposer d'un ensemble complet
+
     temp = pd.concat([X_train, X_test, X_eval], axis=0)
 
-    # Sélectionner les observations où le sexe est connu (0 ou 1)
+
     known = temp[temp["sex"] != 0.5]
 
-    # Si aucune donnée connue n'est présente, on retourne simplement les datasets originaux
+
     if known.empty:
         return X_train, X_test, X_eval
 
-    # Préparer les données d'entraînement pour prédire 'sex'
+
     X_model = known.drop(columns=["sex"])
     y_model = known["sex"]
 
-    # Création du modèle de bagging avec 500 estimateurs et l'estimateur de base: DecisionTreeClassifier
+
     model = BaggingClassifier(
         estimator=DecisionTreeClassifier(),
         n_estimators=500,
@@ -272,7 +272,7 @@ def impute_sex(X_train, X_test, X_eval, columns):
     model.fit(X_model, y_model)
     print("OOB Score :", model.oob_score_)
 
-    # Pour chaque dataset, prédire et mettre à jour les valeurs de 'sex' là où elles sont 0.5
+
     for dataset in [X_train, X_test, X_eval]:
         mask = dataset["sex"] == 0.5
         if mask.any():
@@ -323,7 +323,7 @@ def parse_cytogenetics(cyto_str):
             "complexity_score": 0,
         }
 
-    # Séparer la description en sous-clones (split sur '/')
+
     subclones = cyto_str.split("/")
 
     # On initialise des compteurs globaux
@@ -336,10 +336,10 @@ def parse_cytogenetics(cyto_str):
     total_monosomies = 0
     total_trisomies = 0
 
-    # Liste pour stocker le nombre de chromosomes détectés dans chaque sous-clone
+
     clone_chromosome_numbers = []
 
-    # Pour détecter le sexe
+
     sex = None
 
     for clone in subclones:
@@ -366,7 +366,7 @@ def parse_cytogenetics(cyto_str):
                 # ex : "46"
                 clone_chromosome_numbers.append(int(p))
 
-            # Détecter le sexe
+
             if "xy" in p:
                 if sex is None:
                     sex = 1.0
@@ -386,7 +386,7 @@ def parse_cytogenetics(cyto_str):
             if "add(" in p:
                 total_additions += 1
 
-            # Trisomies / monosomies notées +7, -5, etc.
+
             plus_match = re.search(r"\+(\d+)", p)
             minus_match = re.search(r"\-(\d+)", p)
             if plus_match:
@@ -397,7 +397,7 @@ def parse_cytogenetics(cyto_str):
     # Nombre de sous-clones
     num_subclones = len(subclones)
 
-    # Moyenne (non pondérée) du nombre de chromosomes
+
     if len(clone_chromosome_numbers) > 0:
         avg_chromosomes = sum(clone_chromosome_numbers) / len(clone_chromosome_numbers)
     else:
@@ -432,14 +432,14 @@ def parse_cytogenetics_column(df, column_name="CYTOGENETICS"):
     Prend un DataFrame `df` et le nom de la colonne cytogénétique `column_name`.
     Retourne un nouveau DataFrame comprenant les features extraites.
     """
-    # Appliquer la fonction parse_cytogenetics à chaque ligne
+
     parsed_series = df[column_name].apply(parse_cytogenetics)
 
-    # Convertir la série de dictionnaires en DataFrame
+
     parsed_df = pd.json_normalize(parsed_series)
 
-    # Concaténer avec le DataFrame d'origine (sans dupliquer la colonne de base si vous voulez la garder)
-    # Si vous préférez garder la colonne CYTOGENETICS, ne la supprimez pas.
+
+
     final_df = pd.concat([df.drop(columns=[column_name]), parsed_df], axis=1)
 
     return final_df
@@ -488,13 +488,13 @@ def parse_cytogenetics_v2(cyto_str):
             "complex_flag": False,
         }
 
-    # Vérification du flag "complex"
+
     is_complex = "complex" in cyto_str.lower()
 
-    # Séparation en sous-clones (le séparateur est "/")
+
     subclones = cyto_str.split("/")
 
-    # Initialisation des compteurs (en pondérant par le nombre de cellules de chaque clone)
+
     total_mitoses = 0
     total_translocations = 0
     total_deletions = 0
@@ -504,11 +504,11 @@ def parse_cytogenetics_v2(cyto_str):
     total_monosomies = 0
     total_trisomies = 0
 
-    # Pour la moyenne pondérée du nombre de chromosomes
+
     sum_chromosomes = 0
     count_chromosomes = 0
 
-    # Comptage pour déterminer le sexe (on considère "xy" comme masculin et "xx" comme féminin)
+
     sex_counts = {"xy": 0, "xx": 0}
 
     for clone in subclones:
@@ -519,10 +519,10 @@ def parse_cytogenetics_v2(cyto_str):
 
         # On retire la partie "[x]" pour faciliter le parsing
         clone_clean = re.sub(r"\[\d+\]", "", clone)
-        # Découpage par virgule
+
         parts = [p.strip() for p in clone_clean.split(",") if p.strip()]
 
-        # La première partie est généralement le nombre de chromosomes
+
         if parts and re.match(r"^\d+$", parts[0]):
             try:
                 chrom_count = int(parts[0])
@@ -531,22 +531,22 @@ def parse_cytogenetics_v2(cyto_str):
             except Exception:
                 pass
 
-        # Analyse de chaque partie pour détecter les anomalies
+
         for part in parts:
             part_lower = part.lower()
 
-            # Détection du sexe
+
             if "xy" in part_lower:
                 sex_counts["xy"] += clone_weight
             elif "xx" in part_lower:
                 sex_counts["xx"] += clone_weight
 
-            # Comptage des anomalies structurelles avec des expressions régulières :
+
             # Translocations : ex: t(3;3)
             trans_matches = re.findall(r"t\(\d+;\d+\)", part_lower)
             total_translocations += len(trans_matches) * clone_weight
 
-            # Délétions : ex: del(3)(q26q27)
+
             del_matches = re.findall(r"del\([^)]*\)", part_lower)
             total_deletions += len(del_matches) * clone_weight
 
@@ -562,14 +562,14 @@ def parse_cytogenetics_v2(cyto_str):
             add_matches = re.findall(r"add\([^)]*\)", part_lower)
             total_additions += len(add_matches) * clone_weight
 
-            # Comptage des anomalies numériques (monosomies et trisomies)
+
             monosomy_matches = re.findall(r"(?<![a-zA-Z\(])\-\d+", part_lower)
             total_monosomies += len(monosomy_matches) * clone_weight
 
             trisomy_matches = re.findall(r"\+\d+", part_lower)
             total_trisomies += len(trisomy_matches) * clone_weight
 
-    # Calcul de la moyenne pondérée du nombre de chromosomes
+
     avg_chromosomes = (
         sum_chromosomes / count_chromosomes if count_chromosomes > 0 else None
     )
@@ -583,7 +583,7 @@ def parse_cytogenetics_v2(cyto_str):
         + total_additions
     )
 
-    # Détermination du sexe majoritaire (1.0 pour masculin, 0.0 pour féminin, 0.5 si indéterminé ou mixte)
+
     if sex_counts["xy"] > sex_counts["xx"]:
         sex = 1.0
     elif sex_counts["xy"] < sex_counts["xx"]:
@@ -615,11 +615,11 @@ def parse_cytogenetics_column_v2(df, column_name="CYTOGENETICS"):
     Retourne un nouveau DataFrame qui contient à la fois les données d'origine
     et les features extraites.
     """
-    # Applique la fonction à chaque valeur de la colonne
+
     parsed_series = df[column_name].apply(parse_cytogenetics_v2)
-    # Transforme la série de dictionnaires en DataFrame
+
     parsed_df = pd.json_normalize(parsed_series)
-    # Concatène avec le DataFrame d'origine (vous pouvez garder ou supprimer la colonne initiale)
+
     final_df = pd.concat([df.drop(columns=[column_name]), parsed_df], axis=1)
     return final_df
 
@@ -640,7 +640,7 @@ def parse_cytogenetics_v3(cyto_str):
       - complex_flag : True si "complex" est présent dans la chaîne
       - mosaicism_index : indice de diversité clonale (0 si un seul clone)
     """
-    # Cas où la donnée est manquante ou vide
+
     if pd.isna(cyto_str) or not isinstance(cyto_str, str) or cyto_str.strip() == "":
         return {
             "num_subclones": 0,
@@ -659,17 +659,17 @@ def parse_cytogenetics_v3(cyto_str):
             "mosaicism_index": 0,
         }
 
-    # Vérifier si le terme "complex" est présent dans la chaîne (flag qualitatif)
+
     complex_flag = "complex" in cyto_str.lower()
 
-    # Séparer la chaîne en sous-clones (le séparateur est "/")
+
     clones = cyto_str.split("/")
     num_subclones = len(clones)
 
     # Initialisation des compteurs globaux
     total_mitoses = 0
     clone_chromosome_numbers = []  # pour calculer la moyenne des chromosomes
-    clone_weights = []  # pour calculer la diversité clonale
+    clone_weights = []
     total_translocations = 0
     total_deletions = 0
     total_inversions = 0
@@ -693,14 +693,14 @@ def parse_cytogenetics_v3(cyto_str):
         parts = [p.strip() for p in clone_clean.split(",") if p.strip()]
 
         for p in parts:
-            # Si la partie est uniquement numérique, elle correspond au nombre de chromosomes
+
             if re.match(r"^\d+$", p):
                 try:
                     clone_chromosome_numbers.append(int(p))
                 except:
                     pass
 
-            # Détection du sexe
+
             if "xy" in p:
                 sex_counts["xy"] += weight
             elif "xx" in p:
@@ -718,20 +718,20 @@ def parse_cytogenetics_v3(cyto_str):
             if "add(" in p:
                 total_additions += 1 * weight
 
-            # Comptage des anomalies numériques (ex: +7 ou -5)
+
             if re.search(r"\+\d+", p):
                 total_trisomies += 1 * weight
             if re.search(r"\-\d+", p):
                 total_monosomies += 1 * weight
 
-    # Calcul de la moyenne (non pondérée) du nombre de chromosomes
+
     avg_chromosomes = (
         sum(clone_chromosome_numbers) / len(clone_chromosome_numbers)
         if clone_chromosome_numbers
         else 46
     )
 
-    # Score de complexité = somme des anomalies structurelles
+
     complexity_score = (
         total_translocations
         + total_deletions
@@ -740,7 +740,7 @@ def parse_cytogenetics_v3(cyto_str):
         + total_additions
     )
 
-    # Détermination du sexe : on privilégie le type majoritaire
+
     if sex_counts["xy"] > sex_counts["xx"]:
         sex = 1.0
     elif sex_counts["xx"] > sex_counts["xy"]:
@@ -748,8 +748,8 @@ def parse_cytogenetics_v3(cyto_str):
     else:
         sex = 0.5
 
-    # Calcul d'un indice de mosaicisme à partir des poids clonaux
-    # Ici, on utilise l'entropie de Shannon normalisée pour quantifier la diversité
+
+
     if total_mitoses > 0 and len(clone_weights) > 1:
         entropy = -sum(
             (w / total_mitoses) * math.log(w / total_mitoses)
@@ -806,7 +806,7 @@ def parse_cytogenetics_v4(cyto_str):
       - complex_flag : True si "complex" est présent dans la chaîne
       - mosaicism_index : indice de diversité clonale (0 si un seul clone)
     """
-    # Cas où la donnée est manquante ou vide
+
     if pd.isna(cyto_str) or not isinstance(cyto_str, str) or cyto_str.strip() == "":
         return {
             "num_subclones": 0,
@@ -825,17 +825,17 @@ def parse_cytogenetics_v4(cyto_str):
             "mosaicism_index": 0,
         }
 
-    # Vérifier si le terme "complex" est présent dans la chaîne (flag qualitatif)
+
     complex_flag = "complex" in cyto_str.lower()
 
-    # Séparer la chaîne en sous-clones (le séparateur est "/")
+
     clones = cyto_str.split("/")
     num_subclones = len(clones)
 
     # Initialisation des compteurs globaux
     total_mitoses = 0
     clone_chromosome_numbers = []  # pour calculer la moyenne des chromosomes
-    clone_weights = []  # pour calculer la diversité clonale
+    clone_weights = []
     total_translocations = 0
     total_deletions = 0
     total_inversions = 0
@@ -859,7 +859,7 @@ def parse_cytogenetics_v4(cyto_str):
         parts = [p.strip() for p in clone_clean.split(",") if p.strip()]
 
         for p in parts:
-            # Si la partie est uniquement numérique, elle correspond au nombre de chromosomes
+
             if re.match(r"^\d+$", p):
                 try:
                     clone_chromosome_numbers.append(int(p))
@@ -868,7 +868,7 @@ def parse_cytogenetics_v4(cyto_str):
 
             weight = 1
 
-            # Détection du sexe
+
             if "xy" in p:
                 sex_counts["xy"] += weight
             elif "xx" in p:
@@ -886,20 +886,20 @@ def parse_cytogenetics_v4(cyto_str):
             if "add(" in p:
                 total_additions += 1 * weight
 
-            # Comptage des anomalies numériques (ex: +7 ou -5)
+
             if re.search(r"\+\d+", p):
                 total_trisomies += 1 * weight
             if re.search(r"\-\d+", p):
                 total_monosomies += 1 * weight
 
-    # Calcul de la moyenne (non pondérée) du nombre de chromosomes
+
     avg_chromosomes = (
         sum(clone_chromosome_numbers) / len(clone_chromosome_numbers)
         if clone_chromosome_numbers
         else 46
     )
 
-    # Score de complexité = somme des anomalies structurelles
+
     complexity_score = (
         total_translocations
         + total_deletions
@@ -908,7 +908,7 @@ def parse_cytogenetics_v4(cyto_str):
         + total_additions
     )
 
-    # Détermination du sexe : on privilégie le type majoritaire
+
     if sex_counts["xy"] > sex_counts["xx"]:
         sex = 1.0
     elif sex_counts["xx"] > sex_counts["xy"]:
@@ -916,8 +916,8 @@ def parse_cytogenetics_v4(cyto_str):
     else:
         sex = 0.5
 
-    # Calcul d'un indice de mosaicisme à partir des poids clonaux
-    # Ici, on utilise l'entropie de Shannon normalisée pour quantifier la diversité
+
+
     if total_mitoses > 0 and len(clone_weights) > 1:
         entropy = -sum(
             (w / total_mitoses) * math.log(w / total_mitoses)
@@ -987,21 +987,21 @@ def create_one_hot(
         L'index est remis dans une colonne 'ID'.
     """
 
-    # 1) Compter la fréquence de chaque gène
+
     freq = df[ref_col].value_counts()
 
-    # 2) Identifier les gènes rares
-    rare_genes = freq[freq < min_count].index  # index -> liste des gènes
-    # => Ce sont tous les gènes qui apparaissent < min_count fois
 
-    # 3) Créer une colonne "gene_aggreg"
-    #    qui remplace les gènes rares par "GENE_AUTRE"
+    rare_genes = freq[freq < min_count].index
+
+
+
+
     df[f"{ref_col.lower()}_aggreg"] = df[ref_col].apply(
         lambda g: rare_label if g in rare_genes else g
     )
 
-    # 4) Réaliser le pivot / crosstab
-    #    Pour chaque ID, on indique 1 si le gène (agrégé) est présent, 0 sinon.
+
+
     pivoted = pd.crosstab(df[id_col], df[f"{ref_col.lower()}_aggreg"])
 
     # Facultatif : renommer les colonnes pour y faire apparaître "gene_"
@@ -1035,16 +1035,16 @@ def count_bases_per_id(df, id_col="ID", ref_col="REF"):
         avec les colonnes: [id_col, f'{col.lower()}_A', f'{col.lower()}_G', f'{col.lower()}_C', f'{col.lower()}_T'].
     """
 
-    # 1) Copie de sécurité pour éviter de modifier df directement
+
     df_copy = df.copy()
 
     # 2) Remplacer les NaN par des chaînes vides dans la colonne `ref_col`
     df_copy[ref_col] = df_copy[ref_col].astype(str).fillna("")
 
-    # 3) Grouper par `id_col`, puis concaténer toutes les chaînes en une seule
+
     grouped_strings = df_copy.groupby(id_col)[ref_col].apply(lambda x: "".join(x))
 
-    # 4) Définir une fonction pour compter les occurrences de A, G, C, T
+
     def count_bases(sequence):
         return pd.Series(
             {
@@ -1055,12 +1055,12 @@ def count_bases_per_id(df, id_col="ID", ref_col="REF"):
             }
         )
 
-    # 5) Appliquer cette fonction de comptage sur chaque séquence agrégée
+
     base_counts = grouped_strings.apply(count_bases).reset_index()
 
     # 6) Vous pouvez simplement retourner base_counts,
     #    ou si vous voulez être certain de conserver tous les ID originaux
-    #    (y compris ceux n'ayant aucune entrée dans `ref_col`),
+
     #    on merge avec la liste des ID distincts :
     distinct_ids = df_copy[[id_col]].drop_duplicates()
     result = distinct_ids.merge(base_counts, on=id_col, how="left")
@@ -1112,20 +1112,20 @@ def add_ratio_column(df, col_num, col_den, new_col_name=None):
     if new_col_name is None:
         new_col_name = f"ratio_{col_num}_{col_den}"
 
-    # Copie de sécurité optionnelle (décommentez si vous ne voulez pas modifier le df original)
+
     df = df.copy()
 
-    # Pour gérer les cas où le dénominateur est NaN ou 0,
-    # on calcule le ratio dans une série, puis on l'assigne.
+
+
     ratio_series = pd.Series(np.nan, index=df.index)
 
-    # On peut définir une condition qui identifie où col_den est non-nul, non-NaN
+
     valid_den = (df[col_den].notna()) & (df[col_den] != 0)
 
     # Pour les lignes valides, on calcule le ratio
     ratio_series[valid_den] = df.loc[valid_den, col_num] / df.loc[valid_den, col_den]
 
-    # On ajoute la série au DataFrame
+
     df[new_col_name] = ratio_series
 
     return df
@@ -1138,7 +1138,7 @@ def add_soustrac_column(
     if new_col_name is None:
         new_col_name = f"sous_{col_to_soust}_{col_soust}"
 
-    # Copie de sécurité optionnelle (décommentez si vous ne voulez pas modifier le df original)
+
     df = df.copy()
 
     if molecular:
@@ -1179,17 +1179,17 @@ def preprocess_mutation_data(df_mutations: pd.DataFrame) -> pd.DataFrame:
         [ID, CHR, START, END, REF, ALT, GENE, PROTEIN_CHANGE, EFFECT, VAF, DEPTH]
     Retourne : Un DataFrame agrégé au niveau du patient, avec des features pour le modèle de survie.
     """
-    # -- Étape 1 : création de variables binaires/catégorielles à partir d'EFFECT --
+
     df_mutations = encode_effect(df_mutations)
 
-    # -- Étape 2 : sélection ou transformation d'autres colonnes (CHR, PROTEIN_CHANGE, etc.) --
+
     # ex. encoder le chromosome, calculer une taille d'indel si besoin, etc.
     df_mutations = transform_other_cols(df_mutations)
 
-    # -- Étape 3 : agrégation par ID patient --
+
     df_agg = aggregate_by_patient(df_mutations)
 
-    # -- Étape 4 : (optionnel) normalisation ou filtrage si nécessaire --
+
     # df_agg = normalize_features(df_agg)
 
     return df_agg
@@ -1216,10 +1216,10 @@ def transform_other_cols(df: pd.DataFrame) -> pd.DataFrame:
     """
     Traite d'autres colonnes comme CHR, PROTEIN_CHANGE, etc.
     """
-    # (1) Encoder le chromosome de manière catégorielle (CHR = 1, 2, 3, X, etc.)
+
     #     => Soit on convertit en "chr1, chr2, ..." ou on mappe X, Y en 23, 24...
     df["CHR"] = df["CHR"].astype(str)  # s'assure que c'est du string
-    # Exemple de map "X" -> 23, "Y" -> 24 si vous préférez en numérique
+
     chr_map = {"X": "23", "Y": "24"}  # ou faire l'inverse : "23"->"X" si besoin
     df["CHR"] = df["CHR"].replace(chr_map)
     # Optionnel : on peut laisser CHR en string et faire un one-hot encoding plus tard
@@ -1227,7 +1227,7 @@ def transform_other_cols(df: pd.DataFrame) -> pd.DataFrame:
     # (2) Calculer la "taille" de la mutation (END - START + 1) si c'est un indel
     df["mut_length"] = (df["END"] - df["START"] + 1).fillna(0).astype(int)
 
-    # (3) Extraire la position d'aa impactée depuis PROTEIN_CHANGE si format "p.E545K"
+
     #     => p.E545K => on veut la position 545
     #     On peut faire une regex simple : p.([A-Z])(\d+)([A-Z*])
     import re
@@ -1262,13 +1262,13 @@ def aggregate_by_patient(df: pd.DataFrame) -> pd.DataFrame:
         "is_truncating": "sum",  # nombre de variants truncants
         "is_non_synonymous": "sum",  # nombre de variants non-synonymes
         "is_splice_site": "sum",  # nombre de variants au site de splice
-        # "GENE": "nunique",              # nombre de gènes uniques
-        # "CHR": ["sum", "mean", "min", "max"],               # nombre de chromosomes touchés
+
+
         # "VAF" : ["sum", "mean", "min", "max", "std", "skew"],   # VAF moyen, max, etc.
         # "DEPTH": ["sum", "mean", "min", "max", "std", "skew"],  # profondeur moyenne, etc.
         # "END": ["sum", "mean", "min", "max"],  # position moyenne de fin
         "mut_length": ["sum", "mean", "max"],  # taille moyenne d'indel
-        "AA_position": ["sum", "mean", "min", "max"],  # position moyenne d'aa impacté
+        "AA_position": ["sum", "mean", "min", "max"],
         # etc.
     }
 
@@ -1276,7 +1276,7 @@ def aggregate_by_patient(df: pd.DataFrame) -> pd.DataFrame:
     # donc on peut ajouter une colonne dummy pour compter
     df["count_mut"] = 1
 
-    # On agrège
+
     df_agg = df.groupby("ID").agg(agg_dict)
 
     # Flatten les multi-index de colonnes
@@ -1285,7 +1285,7 @@ def aggregate_by_patient(df: pd.DataFrame) -> pd.DataFrame:
     # Nombre total de mutations
     df_agg["total_mutations"] = df.groupby("ID")["count_mut"].sum()
 
-    # Nombre de gènes distincts
+
     df_agg["unique_genes"] = df.groupby("ID")["GENE"].nunique()
 
     # Autres features, ex. fraction de mutations avec VAF > 0.3
@@ -1304,7 +1304,7 @@ def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     from sklearn.preprocessing import StandardScaler
 
-    # Sélection des colonnes à normaliser (exclure ID, etc.)
+
     cols_to_scale = [c for c in df.columns if c not in ["ID"]]  # On garde ID intact
 
     scaler = StandardScaler()
@@ -1377,7 +1377,7 @@ def add_myvariant_data(df: pd.DataFrame, fields_list: list) -> pd.DataFrame:
 
     required_cols = ["CHR", "START", "REF", "ALT"]
 
-    # Séparer les lignes valides (sans NaN dans les colonnes importantes) et les autres
+
     valid_df = df.dropna(subset=required_cols).copy()
     invalid_df = df[df[required_cols].isna().any(axis=1)].copy()
 
@@ -1391,8 +1391,8 @@ def add_myvariant_data(df: pd.DataFrame, fields_list: list) -> pd.DataFrame:
     for field in fields_list:
         valid_df = add_field(variant_data, valid_df, field)
 
-    # Fusionner les données enrichies (valid_df) avec les lignes non traitées (invalid_df)
-    # On utilise pd.concat pour ne pas perdre les lignes où les colonnes critiques étaient manquantes
+
+
     enriched_df = pd.concat([valid_df, invalid_df], sort=False)
 
     # Optionnel : vous pouvez trier le DataFrame final selon un index ou une colonne d'identifiant
@@ -1401,7 +1401,7 @@ def add_myvariant_data(df: pd.DataFrame, fields_list: list) -> pd.DataFrame:
     return enriched_df
 
 
-# Fonction pour construire le modèle d'embedding
+
 def build_embedding_model(num_categories, embedding_dim):
     input_cat = Input(shape=(1,), name="input_cat")
     emb = Embedding(
@@ -1412,36 +1412,36 @@ def build_embedding_model(num_categories, embedding_dim):
     return model
 
 
-# Fonction pour préparer les embeddings à partir d'une colonne catégorielle
+
 def create_embedding_features(
     df, id_col, ref_col, embedding_dim, min_count=0, rare_label=None
 ):
     df = df.copy()
     # Comptage des occurrences
     counts = df[ref_col].value_counts()
-    # Pour filtrer les catégories rares
+
     if min_count > 0:
         valid_categories = counts[counts >= min_count].index
         if rare_label is not None:
             df[ref_col] = df[ref_col].apply(
                 lambda x: x if x in valid_categories else rare_label
             )
-            # Recalculer après remplacement
+
             counts = df[ref_col].value_counts()
             valid_categories = counts.index
-    # Créer le mapping catégorie -> indice
+
     unique_categories = df[ref_col].unique()
     cat_to_idx = {cat: idx for idx, cat in enumerate(unique_categories)}
     df["cat_idx"] = df[ref_col].map(cat_to_idx)
     num_categories = len(unique_categories)
 
-    # Construire le modèle d'embedding
+
     emb_model = build_embedding_model(num_categories, embedding_dim)
-    # Ici, on n'entraîne pas le modèle (les poids restent aléatoires) – dans un vrai pipeline, vous pouvez l'entraîner
+
     # Obtenir l'embedding pour chaque ligne
     embeddings = emb_model.predict(df["cat_idx"].values.reshape(-1, 1))
 
-    # Construire un DataFrame à partir des embeddings
+
     emb_cols = [f"{ref_col}_emb_{i}" for i in range(embedding_dim)]
     df_emb = pd.DataFrame(embeddings, columns=emb_cols, index=df[id_col])
 

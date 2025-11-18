@@ -15,7 +15,7 @@ def plot_cv_results(cv_results: Dict[str, List[float]]):
     Crée un boxplot pour comparer la distribution des scores de validation croisée
     pour chaque modèle. C'est bien mieux qu'un simple bar chart des moyennes.
     """
-    # Préparer les données pour le plotting
+
     df_results = pd.DataFrame(cv_results)
     sorted_models = df_results.mean().sort_values(ascending=False).index
 
@@ -49,7 +49,7 @@ def plot_feature_importances(
         importances = model.feature_importances_
         title = f"Top {top_n} Feature Importances - {model_name} (MDI)"
     elif hasattr(model, "coef_"):
-        # Pour les modèles linéaires comme Cox, on prend la valeur absolue des coefficients
+
         importances = np.abs(model.coef_)
         title = f"Top {top_n} Coefficient Magnitudes - {model_name}"
     else:
@@ -58,7 +58,7 @@ def plot_feature_importances(
         )
         return
 
-    # Créer un DataFrame pour un tri facile
+
     feature_importance_df = pd.DataFrame(
         {"feature": feature_names, "importance": importances}
     )
@@ -95,14 +95,14 @@ def generate_post_training_report(
     print("  GÉNÉRATION DU RAPPORT DE VISUALISATION POST-ENTRAÎNEMENT")
     print("=" * 80)
 
-    # Créer le dossier de rapports s'il n'existe pas
+
     os.makedirs("reports", exist_ok=True)
 
-    # 1. Graphique de comparaison des performances de la validation croisée
+
     print("\n[1/2] Génération du boxplot de comparaison des modèles...")
     plot_cv_results(cv_results)
 
-    # 2. Graphique d'importance des features pour le MEILLEUR modèle final
+
     print(
         f"\n[2/2] Génération du graphique d'importance pour le meilleur modèle : {model_name}..."
     )

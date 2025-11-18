@@ -18,9 +18,9 @@ def get_preprocessing_pipeline(
     """
     print("\n[PREPROCESSING] Création de la pipeline de prétraitement (avec imputation différenciée)...")
 
-    # --- 1. Identification précise des types de features ---
+
     
-    # Catégoriel (texte)
+
     categorical_features = [col for col in ["CENTER", "CENTER_GROUP"] if col in X_train_df.columns]
 
 
@@ -44,13 +44,13 @@ def get_preprocessing_pipeline(
         # Est-ce un comptage ?
         elif 'count' in col or 'num_' in col or 'total_mutations' in col:
             count_features.append(col)
-        # Le reste est considéré comme ordinal (scores, etc.)
+
         else:
             ordinal_features.append(col)
 
     print(f"   -> Features identifiées : {len(continuous_features)} continues, {len(binary_features)} binaires, {len(count_features)} comptages, {len(ordinal_features)} ordinales, {len(categorical_features)} catégorielles.")
     
-    # --- 2. Définition des pipelines de transformation distinctes ---
+
     
     continuous_transformer = Pipeline(steps=[
         ('clip', ClipQuantiles(lower=0.01, upper=0.99)),
@@ -58,12 +58,12 @@ def get_preprocessing_pipeline(
         ('scaler', RobustScaler())
     ])
 
-    # Stratégie pour les binaires : imputer par la constante 0 (absence de l'événement)
+
     binary_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='constant', fill_value=0))
     ])
     
-    # Stratégie pour les comptages et ordinaux : imputer par la médiane (plus robuste)
+
     count_ordinal_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='median'))
     ])

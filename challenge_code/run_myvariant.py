@@ -18,12 +18,12 @@ def main():
     FILLED_TRAIN_PATH = "datas/X_train/molecular_train_filled.csv"
     FILLED_TEST_PATH = "datas/X_test/molecular_test_filled.csv"
 
-    # --- Étape 1: Nettoyer les données brutes de MyVariant ---
+
     print("\n[ÉTAPE 1/2] Nettoyage des données MyVariant...")
     cleaner = MyVariantCleaner()
     cleaner.process_raw_jsonl(RAW_MYVARIANT_PATH, CLEANED_MYVARIANT_PATH)
 
-    # --- Étape 2: Imputer les dataframes moléculaires ---
+
     print("\n[ÉTAPE 2/2] Imputation des fichiers moléculaires...")
     imputer = MolecularImputer(myvariant_cleaned_path=CLEANED_MYVARIANT_PATH)
 

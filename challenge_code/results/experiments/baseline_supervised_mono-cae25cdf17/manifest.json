@@ -1,0 +1,207 @@
+{
+  "tag": "baseline_supervised_mono-cae25cdf17",
+  "created_at": "2025-11-17T11:59:09.922963Z",
+  "config": {
+    "EXPERIMENT": {
+      "keep_monocyte_indicator": false,
+      "model_family": "rsf",
+      "name": "baseline_supervised_mono",
+      "prune_feature": false,
+      "prune_feature_threshold": 0.9,
+      "random_seed": 42,
+      "use_center_ohe": false,
+      "use_monocyte_supervised": true
+    },
+    "PREPROCESSING": {
+      "auto_detect_continuous_features": false,
+      "clip_quantiles": {
+        "lower": 0.01,
+        "upper": 0.99
+      },
+      "continuous_features": [
+        "BM_BLAST",
+        "WBC",
+        "ANC",
+        "MONOCYTES",
+        "HB",
+        "PLT",
+        "neutrophil_ratio",
+        "monocyte_ratio",
+        "platelet_wbc_ratio",
+        "blast_platelet_ratio",
+        "vaf_max_TP53",
+        "vaf_max_FLT3",
+        "vaf_max_NPM1",
+        "vaf_max_CEBPA",
+        "vaf_max_DNMT3A",
+        "vaf_mean",
+        "vaf_median",
+        "vaf_max",
+        "vaf_std",
+        "high_vaf_ratio",
+        "max_cadd_score",
+        "mean_cadd_score",
+        "max_gerp_score"
+      ],
+      "continuous_threshold": 20,
+      "drop_zero_variance": true,
+      "early_imputation": {
+        "artifact_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\early_continuous_imputer.joblib",
+        "columns": [
+          "BM_BLAST",
+          "WBC",
+          "ANC",
+          "MONOCYTES",
+          "HB",
+          "PLT"
+        ],
+        "enabled": false,
+        "range_map": {
+          "ANC": [
+            0,
+            100
+          ],
+          "BM_BLAST": [
+            0,
+            100
+          ],
+          "HB": [
+            2,
+            25
+          ],
+          "MONOCYTES": [
+            0,
+            100
+          ],
+          "PLT": [
+            0,
+            3000
+          ],
+          "WBC": [
+            0,
+            400
+          ]
+        },
+        "respect_ranges": true,
+        "strategy": "iterative"
+      },
+      "imputer": "iterative",
+      "iterative": {
+        "estimator": "BayesianRidge",
+        "estimator_n_estimators": 250,
+        "max_iter": 100,
+        "random_state": 42
+      },
+      "knn": {
+        "n_neighbors": 4
+      },
+      "monocyte_imputer": {
+        "clip_to_wbc": true,
+        "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
+        "predictors": {
+          "cat": [
+            "CENTER"
+          ],
+          "num": [
+            "WBC",
+            "ANC",
+            "HB",
+            "PLT",
+            "BM_BLAST"
+          ]
+        },
+        "preprocessing": {
+          "num_imputer": "median",
+          "num_scaler": "standard"
+        },
+        "regressor": {
+          "l2_regularization": 0.0,
+          "learning_rate": 0.08,
+          "max_depth": null,
+          "max_iter": 400,
+          "random_state": 42,
+          "type": "HistGradientBoostingRegressor"
+        },
+        "winsorize_pct": 99.5
+      },
+      "numeric_scaler": "robust"
+    }
+  },
+  "env": {
+    "python": "3.11.9",
+    "platform": "Windows-10-10.0.26100-SP0",
+    "git_commit": "c3a4f43701ba53fa72228696d25727a1aedce0b3"
+  },
+  "extra": {
+    "preprocessing_report": {
+      "imputer_strategy": "iterative",
+      "knn_n_neighbors": 4,
+      "iterative": {
+        "max_iter": 100,
+        "estimator": "BayesianRidge",
+        "estimator_n_estimators": 250,
+        "random_state": 42
+      },
+      "clip_quantiles": {
+        "lower": 0.01,
+        "upper": 0.99
+      },
+      "numeric_scaler": "robust",
+      "monocyte_imputer": {
+        "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
+        "predictors": {
+          "num": [
+            "WBC",
+            "ANC",
+            "HB",
+            "PLT",
+            "BM_BLAST"
+          ],
+          "cat": [
+            "CENTER"
+          ]
+        },
+        "preprocessing": {
+          "num_imputer": "median",
+          "num_scaler": "standard"
+        },
+        "regressor": {
+          "type": "HistGradientBoostingRegressor",
+          "learning_rate": 0.08,
+          "max_depth": null,
+          "max_iter": 400,
+          "l2_regularization": 0.0,
+          "random_state": 42
+        },
+        "clip_to_wbc": true,
+        "winsorize_pct": 99.5
+      }
+    },
+    "clinical_ranges": {
+      "BM_BLAST": [
+        0,
+        100
+      ],
+      "WBC": [
+        0,
+        400
+      ],
+      "ANC": [
+        0,
+        100
+      ],
+      "MONOCYTES": [
+        0,
+        100
+      ],
+      "PLT": [
+        0,
+        3000
+      ],
+      "HB": [
+        2,
+        25
+      ]
+    }
+  }
+}

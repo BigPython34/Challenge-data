@@ -50,7 +50,7 @@ class MyVariantCleaner:
 
         effect_str = str(effect_str).lower()
 
-        # Priorité 1: Effets à fort impact (tronquants)
+
         if "frameshift" in effect_str or "stop_gained" in effect_str:
             return "frameshift_or_stop_gained"
         if "stop_lost" in effect_str:
@@ -58,29 +58,29 @@ class MyVariantCleaner:
         if "start_lost" in effect_str or "initiator_codon" in effect_str:
             return "start_lost"
 
-        # Priorité 2: Effets sur l'épissage (splicing)
+
         if "splice" in effect_str:
             return "splice_site_variant"
 
-        # Priorité 3: Changements dans le cadre de lecture
+
         if "inframe" in effect_str:
             return "inframe_variant"
 
-        # Priorité 4: Changement d'acide aminé (le plus courant)
+
         if "missense" in effect_str or "non_synonymous" in effect_str:
             return "non_synonymous_codon"
 
-        # Priorité 5: Effets silencieux
+
         if "synonymous" in effect_str:
             return "synonymous_codon"
 
-        # Priorité 6: Régions régulatrices ou non codantes
+
         if "utr_variant" in effect_str:
             return "utr_variant"
         if "upstream" in effect_str or "downstream" in effect_str:
             return "regulatory_variant"
 
-        # Priorité 7: Effets moins informatifs
+
         if "intron" in effect_str:
             return "intron_variant"
         if "intergenic" in effect_str:
@@ -95,7 +95,7 @@ class MyVariantCleaner:
             return hgvs_p
 
         hgvs_p = re.sub(r"[Xx]$", "*", hgvs_p)
-        # Gère les cas comme p.Ala123Gly et p.Ala123*
+
         match = re.match(r"p\.([A-Za-z]{3})(\d+)([A-Za-z]{3}|\*)", hgvs_p)
 
         if match:

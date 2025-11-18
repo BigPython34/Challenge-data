@@ -15,7 +15,7 @@ def clean_directory(directory, pattern="*", extensions_only=False):
         return 0
 
     if extensions_only:
-        # Pour les extensions, chercher récursivement
+
         files = []
         for ext in pattern if isinstance(pattern, list) else [pattern]:
             files.extend(Path(directory).rglob(ext))

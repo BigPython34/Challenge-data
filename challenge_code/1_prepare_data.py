@@ -16,6 +16,7 @@ from src.config import (
     FEATURE_ENGINEERING_TOGGLES,
     REDUNDANCY_POLICY,
     MODEL_DIR,
+    FLOAT32_POLICY,
 )
 from src.utils.experiment import (
     compute_tag,
@@ -25,8 +26,8 @@ from src.utils.experiment import (
     get_full_config_snapshot,
 )
 
-# --- 1. IMPORTATION DE VOTRE LOGIQUE MÉTIER ---
-# Assurez-vous que le dossier 'src' est accessible depuis l'endroit où vous lancez ce script
+
+
 from src.data.data_cleaning.cleaner import clean_and_validate_data
 
 from src.data.features.feature_engineering import (
@@ -41,7 +42,7 @@ from src.data.features.feature_engineering import (
 from sklearn.experimental import (
     enable_iterative_imputer,
 )  # noqa: F401 (side-effect import)
-from src.data.data_cleaning.imputer import supervised_monocyte_imputation
+from src.data.data_cleaning.imputer import AdvancedImputer, supervised_monocyte_imputation
 from src.data.features.pruning import (
     prune_highly_correlated_features_pair,
     prune_rare_binary_features,
@@ -51,7 +52,7 @@ from src.data.features.pruning import (
 def run_feature_engineering(
     clinical_df: pd.DataFrame,
     molecular_df: pd.DataFrame,
-    important_genes: list,  # Accepte maintenant la liste pré-calculée
+    important_genes: list,
     data_manager: ExternalDataManager,
 ) -> pd.DataFrame:
     """
@@ -77,7 +78,7 @@ def run_feature_engineering(
 
     if FEATURE_ENGINEERING_TOGGLES.get("molecular", True):
         print("[FE] Création des features moléculaires...")
-        # L'appel à la fonction moléculaire utilise maintenant la liste de gènes fixe
+
         all_molecular_features = MolecularFeatureExtraction.create_all_molecular_features(
             base_df=final_df[[ID_COLUMNS["patient"]]],
             maf_df=molecular_df,
@@ -99,6 +100,123 @@ def run_feature_engineering(
     return final_df
 
 
+def apply_float32_policy(
+    df: pd.DataFrame,
+    *,
+    candidates: list[str] | None = None,
+    auto_detect: bool = False,
+    context: str = "",
+) -> pd.DataFrame:
+    """Cast selected float columns to float32 according to the global policy."""
+    policy = FLOAT32_POLICY or {}
+    if not policy.get("enabled", False):
+        return df
+
+    protected = set(policy.get("protected_columns", []))
+    protected.update(
+        filter(
+            None,
+            [
+                ID_COLUMNS.get("patient"),
+                ID_COLUMNS.get("center"),
+                TARGET_COLUMNS.get("status"),
+                TARGET_COLUMNS.get("time"),
+                "CENTER_GROUP",
+            ],
+        )
+    )
+
+    columns_to_cast: list[str] = []
+    if candidates:
+        columns_to_cast.extend(
+            [col for col in candidates if col in df.columns and col not in protected]
+        )
+    if auto_detect:
+        float_like_cols = df.select_dtypes(include=["float64", "Float64"]).columns
+        columns_to_cast.extend([col for col in float_like_cols if col not in protected])
+
+    # Deduplicate while preserving order
+    seen = set()
+    ordered_columns: list[str] = []
+    for col in columns_to_cast:
+        if col not in seen:
+            seen.add(col)
+            ordered_columns.append(col)
+
+    if not ordered_columns:
+        return df
+
+    df[ordered_columns] = df[ordered_columns].astype("float32")
+    if context:
+        print(
+            f"[FLOAT32] Converted {len(ordered_columns)} columns to float32 during {context}."
+        )
+    return df
+
+
+def apply_early_continuous_imputation(
+    train_df: pd.DataFrame, test_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Run the configured continuous-feature imputation before feature engineering.
+    """
+    early_cfg = PREPROCESSING.get("early_imputation", {})
+    if not early_cfg.get("enabled", False):
+        print("[PREP] Early continuous imputation disabled in config.")
+        return train_df, test_df
+
+    candidate_columns = early_cfg.get("columns") or PREPROCESSING.get("continuous_features", [])
+    protected = {TARGET_COLUMNS["status"], TARGET_COLUMNS["time"]}
+    columns = [
+        col
+        for col in candidate_columns
+        if col in train_df.columns and col in test_df.columns and col not in protected
+    ]
+
+    if not columns:
+        print("[PREP] No continuous columns available for early imputation.")
+        return train_df, test_df
+
+    strategy = early_cfg.get("strategy", PREPROCESSING.get("imputer", "iterative"))
+    n_neighbors = early_cfg.get("n_neighbors")
+    imputer = AdvancedImputer(strategy=strategy, n_neighbors=n_neighbors)
+
+    print(
+        f"[PREP] Early imputation on {len(columns)} continuous features using '{strategy}' strategy."
+    )
+    before_train = train_df[columns].isna().mean().mean()
+    before_test = test_df[columns].isna().mean().mean()
+
+    imputer.fit(train_df[columns])
+    train_imputed = imputer.transform(train_df[columns]).astype("float32")
+    test_imputed = imputer.transform(test_df[columns]).astype("float32")
+    train_df.loc[:, columns] = train_imputed
+    test_df.loc[:, columns] = test_imputed
+
+    after_train = train_df[columns].isna().mean().mean()
+    after_test = test_df[columns].isna().mean().mean()
+    print(
+        f"[PREP] Train missing rate: {before_train:.2%} -> {after_train:.2%} | "
+        f"Test missing rate: {before_test:.2%} -> {after_test:.2%}"
+    )
+
+    if early_cfg.get("respect_ranges", False):
+        range_map = early_cfg.get("range_map") or CLINICAL_RANGES
+        for col in columns:
+            bounds = range_map.get(col)
+            if bounds:
+                train_df[col] = train_df[col].clip(*bounds)
+                test_df[col] = test_df[col].clip(*bounds)
+
+    artifact_path = early_cfg.get("artifact_path")
+    if artifact_path:
+        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+        joblib.dump(imputer, artifact_path)
+        print(f"[PREP] Saved early imputer to {artifact_path}.")
+
+    return train_df, test_df
+
+
 # --- 5. SCRIPT PRINCIPAL ---
 def main():
     """Exécute la pipeline de préparation de données de A à Z."""
@@ -106,7 +224,7 @@ def main():
         cosmic_path=DATA_PATHS["cosmic_file"], oncokb_path=DATA_PATHS["oncokb_file"]
     )
 
-    # --- Tag d'expérience et manifest ---
+
     cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
     tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
     # Save manifest with preprocessing numeric details for traceability
@@ -149,7 +267,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     # Output paths (written below)
 
-    # --- ÉTAPE 1 & 2: CHARGEMENT ET NETTOYAGE ---
+
     print("=" * 50)
     print("ÉTAPE 1 & 2: CHARGEMENT ET NETTOYAGE")
     print("=" * 50)
@@ -178,6 +296,20 @@ def main():
         clinical_train_clean, target_train_clean, on=ID_COLUMNS["patient"], how="inner"
     )
     test_df = clinical_test_clean.copy()
+
+    float32_candidates = FLOAT32_POLICY.get("columns") or PREPROCESSING.get(
+        "continuous_features", []
+    )
+    train_df = apply_float32_policy(
+        train_df,
+        candidates=float32_candidates,
+        context="post-clean merge (train)",
+    )
+    test_df = apply_float32_policy(
+        test_df,
+        candidates=float32_candidates,
+        context="post-clean merge (test)",
+    )
 
     # Optionally warm the MyVariant cache once for all variants present in train+test
     try:
@@ -236,12 +368,12 @@ def main():
             lambda x: x if x in major_centers else CENTER_GROUPING.get('other_label', 'CENTER_OTHER')
         )
 
-        # Afficher les nouveaux effectifs pour vérification
+
         print("\nEffectifs après regroupement (sur le train set):")
         print(train_df[ID_COLUMNS["center"]].value_counts())
     else:
         print("\n[PREP] Regroupement des centres rares désactivé.")
-    # Imputation supervisée des monocytes avant le feature engineering pour réduire le drift
+
     try:
         if (
             EXPERIMENT.get("use_monocyte_supervised", False)
@@ -261,15 +393,27 @@ def main():
         Exception
     ) as e:  # noqa: BLE001 (intentional broad catch to keep pipeline running)
         print(f"[MONO] Imputation supervisée ignorée (erreur): {e}")
-    # --- NOUVELLE ÉTAPE 2.5: DÉTERMINATION DE LA LISTE DE GÈNES ---
+
+    train_df, test_df = apply_early_continuous_imputation(train_df, test_df)
+    train_df = apply_float32_policy(
+        train_df,
+        candidates=float32_candidates,
+        context="after early imputation (train)",
+    )
+    test_df = apply_float32_policy(
+        test_df,
+        candidates=float32_candidates,
+        context="after early imputation (test)",
+    )
+
     print("\n" + "=" * 50)
     print("ÉTAPE 2.5: FILTRAGE DES GÈNES MOLÉCULAIRES")
     print("=" * 50)
-    # On détermine la liste une seule fois en utilisant les données de train ET de test
+
     important_genes_final_list = MolecularFeatureExtraction.get_frequent_genes(
         train_maf=molecular_train_clean, test_maf=molecular_test_clean
     )
-    # --- ÉTAPE 3: FEATURE ENGINEERING ---
+
     print("\n" + "=" * 50)
     print("ÉTAPE 3: FEATURE ENGINEERING")
     print("=" * 50)
@@ -286,6 +430,20 @@ def main():
         data_manager=data_manager,
     )
 
+    feature_auto_cast = FLOAT32_POLICY.get("auto_detect_feature_frames", False)
+    X_train_featured = apply_float32_policy(
+        X_train_featured,
+        candidates=float32_candidates,
+        auto_detect=feature_auto_cast,
+        context="feature engineering (train)",
+    )
+    X_test_featured = apply_float32_policy(
+        X_test_featured,
+        candidates=float32_candidates,
+        auto_detect=feature_auto_cast,
+        context="feature engineering (test)",
+    )
+
     print("\n" + "=" * 50)
     print("ÉTAPE 4: FINALISATION ET SÉPARATION")
     print("=" * 50)
@@ -295,7 +453,7 @@ def main():
 
     y_train_df = X_train_featured[[TARGET_COLUMNS["status"], TARGET_COLUMNS["time"]]].copy()
 
-    # Séparer les features de la target dans le set d'entraînement
+
     X_train_to_process = X_train_featured.drop(
         columns=[TARGET_COLUMNS["status"], TARGET_COLUMNS["time"], ID_COLUMNS["patient"]], errors="ignore"
     )
@@ -307,7 +465,7 @@ def main():
         X_train_to_process = X_train_to_process.drop(columns=REDUNDANCY_POLICY["explicit_drop"], errors="ignore")
         X_test_to_process = X_test_to_process.drop(columns=REDUNDANCY_POLICY["explicit_drop"], errors="ignore")
 
-    # Retirer CENTER des features pour éviter un fort décalage train/test (test = CENTER_OTHER uniquement)
+
     if not EXPERIMENT.get("use_center_ohe", False):
         for df_name, df in [("train", X_train_to_process), ("test", X_test_to_process)]:
             if ID_COLUMNS["center"] in df.columns:
@@ -316,11 +474,11 @@ def main():
                 )
                 df.drop(columns=[ID_COLUMNS["center"]], inplace=True)
 
-    # Garantir la cohérence des colonnes entre train et test
+
     train_cols = X_train_to_process.columns
     X_test_to_process = X_test_to_process.reindex(columns=train_cols)
 
-    # --- ÉTAPE 5: PRÉTRAITEMENT COMPLET ---
+
     print("\n" + "=" * 50)
     print("ÉTAPE 5: PRÉTRAITEMENT (IMPUTATION, SCALING, ENCODING)")
     print("=" * 50)
@@ -329,11 +487,11 @@ def main():
         X_train_to_process, PREPROCESSING.get("imputer", "knn")
     )
 
-    # Entraîner le préprocesseur
+
     print("[PREPROCESSING] Entraînement du préprocesseur...")
     preprocessor.fit(X_train_to_process)
 
-    # Transformer les deux jeux de données
+
     print("[PREPROCESSING] Transformation des données d'entraînement...")
     # La sortie est maintenant DIRECTEMENT un DataFrame avec les bons noms !
     X_train_processed_df = preprocessor.transform(X_train_to_process)
@@ -342,11 +500,11 @@ def main():
     X_test_processed_df = preprocessor.transform(X_test_to_process)
 
     # Plus besoin de reconstruire les noms de colonnes manuellement !
-    # Il suffit de réinsérer les IDs.
+
     X_train_processed_df.insert(0, ID_COLUMNS["patient"], train_ids.values)
     X_test_processed_df.insert(0, ID_COLUMNS["patient"], test_ids.values)
 
-    # Ajouter un identifiant de groupe de centre pour la CV (non utilisé comme feature)
+
     try:
         center_map_train = train_df.set_index(ID_COLUMNS["patient"])[ID_COLUMNS["center"]].astype(str)
         center_map_test = test_df.set_index(ID_COLUMNS["patient"])[ID_COLUMNS["center"]].astype(str)
@@ -369,7 +527,7 @@ def main():
     except Exception as e:  # noqa: BLE001
         print(f"[PREP] Impossible d'ajouter CENTER_GROUP (continuons sans): {e}")
 
-    # --- ÉTAPE 5.1: SUPPRESSION DES FEATURES À VARIANCE NULLE (sur train OU test) ---
+
     if PREPROCESSING.get("drop_zero_variance", True):
         drop_cols = []
         for col in X_train_processed_df.columns:
@@ -389,14 +547,14 @@ def main():
     else:
         print("[PREPROCESSING] Suppression des colonnes à variance nulle désactivée.")
 
-    # --- ÉTAPE 5.2: PRUNING OPTIONNEL DES FEATURES FORTEMENT CORRÉLÉES ---
+
     try:
         if EXPERIMENT.get("prune_feature", False):
             thr = float(EXPERIMENT.get("prune_feature_threshold", 0.90))
             print("\n" + "=" * 50)
             print("ÉTAPE 5.2: PRUNING DES FEATURES FORTEMENT CORRÉLÉES")
             print("=" * 50)
-            # Préserver ID et CENTER_GROUP
+
             X_train_processed_df, X_test_processed_df = (
                 prune_highly_correlated_features_pair(
                     X_train_processed_df,
@@ -416,7 +574,19 @@ def main():
         ["ID", "CENTER_GROUP"],
     )
 
-    # --- ÉTAPE 6: SAUVEGARDE DES DONNÉES FINALES ET DES ARTEFACTS ---
+    processed_auto_cast = FLOAT32_POLICY.get("auto_detect_processed_frames", False)
+    X_train_processed_df = apply_float32_policy(
+        X_train_processed_df,
+        auto_detect=processed_auto_cast,
+        context="post-processing (train)",
+    )
+    X_test_processed_df = apply_float32_policy(
+        X_test_processed_df,
+        auto_detect=processed_auto_cast,
+        context="post-processing (test)",
+    )
+
+
     print("\n" + "=" * 50)
     print("ÉTAPE 6: SAUVEGARDE DES DATASETS TRAITÉS ET DU PRÉPROCESSEUR")
     print("=" * 50)
@@ -432,11 +602,11 @@ def main():
     )
     y_train_df.to_csv(os.path.join(output_dir, "y_train_processed.csv"), index=False)
 
-    # Sauvegarde du préprocesseur ENTRAÎNÉ. C'est lui qui sera utilisé pour la prédiction finale.
+
     os.makedirs(MODEL_DIR, exist_ok=True)
     joblib.dump(preprocessor, os.path.join(MODEL_DIR, "preprocessor.joblib"))
 
-    # Enregistrer la liste des features finales pour la traçabilité
+
     try:
         save_feature_list(tag, X_train_processed_df.columns.tolist())
     except Exception as e:  # noqa: BLE001
