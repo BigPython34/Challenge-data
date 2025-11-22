@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 from src.data.data_extraction.external_data_manager import ExternalDataManager
 from src.modeling.pipeline_components import get_preprocessing_pipeline
@@ -19,11 +20,10 @@ from src.config import (
     FLOAT32_POLICY,
 )
 from src.utils.experiment import (
-    compute_tag,
     save_manifest,
     save_feature_list,
     ensure_experiment_dir,
-    get_full_config_snapshot,
+    compute_tag_with_signature,
 )
 
 
@@ -221,12 +221,12 @@ def apply_early_continuous_imputation(
 def main():
     """Exécute la pipeline de préparation de données de A à Z."""
     data_manager = ExternalDataManager(
-        cosmic_path=DATA_PATHS["cosmic_file"], oncokb_path=DATA_PATHS["oncokb_file"]
+        cosmic_path=DATA_PATHS["cosmic_file"],
+        oncokb_path=DATA_PATHS["oncokb_file"],
+        clinvar_path=DATA_PATHS.get("clinvar_vcf"),
     )
 
-
-    cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
-    tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
+    tag, cfg_signature, full_cfg_snapshot, cfg_slice = compute_tag_with_signature()
     # Save manifest with preprocessing numeric details for traceability
     extras = {
         "preprocessing_report": {
@@ -238,16 +238,15 @@ def main():
             "monocyte_imputer": PREPROCESSING.get("monocyte_imputer"),
         },
         "clinical_ranges": CLINICAL_RANGES,
+        "config_signature": cfg_signature,
     }
     exp_dir = save_manifest(tag, full_config=cfg_slice, extra=extras)
     # Save the full config snapshot for complete traceability
     try:
-        full_cfg = get_full_config_snapshot()
+        full_cfg = full_cfg_snapshot
         base = ensure_experiment_dir(tag)
         with open(os.path.join(base, "config_full.json"), "w", encoding="utf-8") as f:
-            import json as _json
-
-            _json.dump(full_cfg, f, ensure_ascii=False, indent=2)
+            json.dump(full_cfg, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[TRACE] Impossible d'enregistrer config_full.json: {e}")
     print("[REPORT] Prétraitement: ")

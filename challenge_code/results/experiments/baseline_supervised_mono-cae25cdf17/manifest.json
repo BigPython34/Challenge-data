@@ -1,6 +1,6 @@
 {
   "tag": "baseline_supervised_mono-cae25cdf17",
-  "created_at": "2025-11-17T11:59:09.922963Z",
+  "created_at": "2025-11-19T13:44:17.076788Z",
   "config": {
     "EXPERIMENT": {
       "keep_monocyte_indicator": false,
@@ -130,7 +130,7 @@
   "env": {
     "python": "3.11.9",
     "platform": "Windows-10-10.0.26100-SP0",
-    "git_commit": "c3a4f43701ba53fa72228696d25727a1aedce0b3"
+    "git_commit": "03dd5468e5f48b29c3b44a84efb3e9c74b951e4f"
   },
   "extra": {
     "preprocessing_report": {

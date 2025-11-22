@@ -190,15 +190,19 @@
   "trisomy_8",
   "TP53_high_VAF",
   "FLT3_high_VAF",
+  "CEBPA_high_VAF",
   "DNMT3A_high_VAF",
   "vaf_max_IDH1",
   "vaf_max_IDH2",
+  "IDH2_high_VAF",
   "TP53_truncating",
   "CEBPA_biallelic",
   "FLT3_ITD",
+  "FLT3_TKD",
   "pathway_diversity_score",
   "NPM1_pos_FLT3_neg",
   "double_hit_spliceosome",
+  "triple_hit_epigenetic",
   "vaf_ratio_FLT3_NPM1",
   "eln_mol_favorable",
   "eln_mol_intermediate",
@@ -209,5 +213,7 @@
   "impact_HIGH",
   "impact_MODERATE",
   "cyto_normal_mol_favorable",
-  "cyto_complex_and_mol_tp53"
+  "cyto_normal_mol_adverse",
+  "cyto_complex_and_mol_tp53",
+  "has_rare_cyto_event"
 ]

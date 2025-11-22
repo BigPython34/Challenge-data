@@ -1,6 +1,7 @@
 # molecular_feature_engineering.py
 
 import pandas as pd
+import re
 from ...config import (
     ALL_IMPORTANT_GENES,
     ADVERSE_GENES,
@@ -434,6 +435,87 @@ class MolecularFeatureExtraction:
         return impact_features.reset_index()
 
     @staticmethod
+    def _extract_clinvar_features(
+        maf_df: pd.DataFrame, category_patterns: Optional[dict]
+    ) -> pd.DataFrame:
+        if (
+            maf_df is None
+            or maf_df.empty
+            or "clinvar_clnsig" not in maf_df.columns
+            or "ID" not in maf_df.columns
+        ):
+            return pd.DataFrame()
+
+        annotated = maf_df.dropna(subset=["ID", "clinvar_clnsig"]).copy()
+        if annotated.empty:
+            return pd.DataFrame()
+
+        annotated["ID"] = annotated["ID"].astype(str)
+        annotated["clinvar_clnsig_norm"] = (
+            annotated["clinvar_clnsig"].astype(str).str.lower()
+        )
+
+        features = (
+            annotated.groupby("ID")["clinvar_clnsig_norm"]
+            .size()
+            .rename("clinvar_annotated_variant_count")
+            .to_frame()
+        )
+        features["clinvar_has_any_annotation"] = 1
+
+        patterns_cfg = category_patterns or {}
+        for category, patterns in patterns_cfg.items():
+            if patterns is None:
+                continue
+            tokens = [p for p in patterns if p]
+            if not tokens:
+                continue
+            pattern_regex = "|".join(re.escape(tok.lower()) for tok in tokens)
+            if not pattern_regex:
+                continue
+            mask = annotated["clinvar_clnsig_norm"].str.contains(
+                pattern_regex, na=False
+            )
+            cat_counts = (
+                annotated.loc[mask]
+                .groupby("ID")["clinvar_clnsig_norm"]
+                .size()
+                .rename(f"clinvar_{category}_count")
+            )
+            features = features.join(cat_counts, how="left")
+            col_name = f"clinvar_{category}_count"
+            if col_name not in features.columns:
+                features[col_name] = 0
+            features[col_name] = features[col_name].fillna(0).astype(int)
+            features[f"clinvar_any_{category}"] = (
+                features[col_name] > 0
+            ).astype(int)
+
+        combo_specs = {
+            "pathogenic_like": ["pathogenic", "likely_pathogenic"],
+            "uncertain_or_conflicting": ["uncertain", "conflicting"],
+        }
+        for combo, categories in combo_specs.items():
+            cols = [f"clinvar_{cat}_count" for cat in categories if f"clinvar_{cat}_count" in features.columns]
+            if not cols:
+                continue
+            combo_col = f"clinvar_{combo}_count"
+            features[combo_col] = features[cols].sum(axis=1)
+            features[f"clinvar_any_{combo}"] = (
+                features[combo_col] > 0
+            ).astype(int)
+
+        if "clinvar_annotated_variant_count" in features.columns:
+            denom = features["clinvar_annotated_variant_count"].replace(0, pd.NA)
+            if "clinvar_pathogenic_like_count" in features.columns:
+                features["clinvar_pathogenic_like_ratio"] = (
+                    features["clinvar_pathogenic_like_count"] / denom
+                ).fillna(0)
+
+        features = features.reset_index().rename(columns={"index": "ID"})
+        return features
+
+    @staticmethod
     def create_all_molecular_features(
         base_df: pd.DataFrame,
         maf_df: pd.DataFrame,
@@ -445,6 +527,8 @@ class MolecularFeatureExtraction:
         en utilisant une liste de gènes fixe pour garantir la cohérence.
         """
 
+        maf_df = maf_df.copy() if maf_df is not None else pd.DataFrame()
+
         if not external_data_manager.gene_info_data.empty:
             maf_df = maf_df.merge(
                 external_data_manager.get_gene_info(),
@@ -455,6 +539,27 @@ class MolecularFeatureExtraction:
         # Ensure ID types align for all groupby/join operations (string keys)
         if "ID" in maf_df.columns:
             maf_df["ID"] = maf_df["ID"].astype(str)
+
+        clinvar_features = pd.DataFrame()
+        clinvar_cfg = (
+            MOLECULAR_EXTERNAL_SCORES.get("clinvar", {})
+            if MOLECULAR_EXTERNAL_SCORES
+            else {}
+        )
+        if (
+            not maf_df.empty
+            and clinvar_cfg.get("enabled", False)
+            and external_data_manager is not None
+            and getattr(external_data_manager, "has_clinvar_annotations", False)
+        ):
+            try:
+                maf_df = external_data_manager.merge_clinvar_annotations(maf_df)
+                clinvar_features = MolecularFeatureExtraction._extract_clinvar_features(
+                    maf_df,
+                    clinvar_cfg.get("category_patterns", {}),
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[FE Mol.] ClinVar features skipped: {exc}")
 
         risk_features = MolecularFeatureExtraction.extract_molecular_risk_features(
             base_df, maf_df, important_genes=important_genes
@@ -735,7 +840,12 @@ class MolecularFeatureExtraction:
                         fillv = 0 if c.endswith("_count") else 0.0
                         external_features[c] = external_features[c].fillna(fillv)
         all_molecular_df = risk_features
-        for df_to_merge in [burden_features, external_features, impact_features]:
+        for df_to_merge in [
+            burden_features,
+            external_features,
+            impact_features,
+            clinvar_features,
+        ]:
             if not df_to_merge.empty:
                 all_molecular_df = pd.merge(
                     all_molecular_df, df_to_merge, on="ID", how="outer"

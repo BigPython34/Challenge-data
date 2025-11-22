@@ -278,15 +278,57 @@ def prune_rare_binary_features(
     """
     print("Démarrage du pruning des features binaires rares...")
 
-
     train_df_pruned = train_df.copy()
     test_df_pruned = test_df.copy()
+
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("rare_binary_protected_features", []))
+    aggregations = policy.get("rare_feature_aggregations", [])
+
+    def _apply_rare_aggregations(df: pd.DataFrame) -> list[str]:
+        created: list[str] = []
+        for agg in aggregations:
+            output_col = agg.get("output_col")
+            source_cols = agg.get("features", []) or []
+            if not output_col:
+                continue
+            available = [c for c in source_cols if c in df.columns]
+            mode = agg.get("mode", "any")
+
+            if available:
+                source_frame = df[available].fillna(0)
+                combined = source_frame.sum(axis=1)
+            else:
+                combined = pd.Series(0, index=df.index)
+
+            if mode == "sum":
+                df[output_col] = combined.astype(float)
+            else:
+                df[output_col] = (combined > 0).astype(int)
+
+            created.append(output_col)
+        return created
+
+    if aggregations:
+        print("[PRUNING] Ajout de features agrégées pour événements rares:")
+        agg_cols = _apply_rare_aggregations(train_df_pruned)
+        _apply_rare_aggregations(test_df_pruned)
+        if agg_cols:
+            print(f"   -> Colonnes créées: {agg_cols}")
+            protected_cols.update(agg_cols)
+
+    if protected_cols:
+        existing_protected = [c for c in protected_cols if c in train_df_pruned.columns]
+        if existing_protected:
+            print(
+                f"[PRUNING] Protection activée pour {len(existing_protected)} features critiques: {existing_protected}"
+            )
 
     cols_to_prune = []
 
 
     for col in train_df_pruned.columns:
-        if col in ignore_cols:
+        if col in ignore_cols or col in protected_cols:
             continue
 
 

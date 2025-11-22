@@ -4,7 +4,7 @@ import hashlib
 import datetime as dt
 import platform
 import subprocess
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from src.config import RESULTS_DIR
 
@@ -22,6 +22,28 @@ def compute_tag(config_slice: Dict[str, Any], prefix: Optional[str] = None) -> s
     payload = json.dumps(canon, separators=(",", ":"), ensure_ascii=False)
     short = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
     return f"{prefix}-{short}" if prefix else short
+
+
+def compute_tag_with_signature(
+    prefix: Optional[str] = None,
+) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
+    """Return a stable experiment tag aligned on the full config snapshot.
+
+    Returns (tag, config_signature, full_config_snapshot, config_slice_used_for_tag).
+    """
+
+    full_cfg_snapshot = get_full_config_snapshot()
+    signature_payload = json.dumps(
+        full_cfg_snapshot, ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
+    cfg_signature = hashlib.sha256(signature_payload).hexdigest()[:12]
+    cfg_slice = {
+        "PREPROCESSING": full_cfg_snapshot.get("PREPROCESSING"),
+        "EXPERIMENT": full_cfg_snapshot.get("EXPERIMENT"),
+        "CONFIG_SIGNATURE": cfg_signature,
+    }
+    tag = compute_tag(cfg_slice, prefix=prefix)
+    return tag, cfg_signature, full_cfg_snapshot, cfg_slice
 
 
 def _git_commit() -> Optional[str]:

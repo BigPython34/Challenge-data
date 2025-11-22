@@ -20,6 +20,7 @@ def _build_data_paths(base_dir: Path) -> dict[str, str]:
         "output_dir": str(base_dir / "datasets_processed"),
         "oncokb_file": str(data_dir / "external" / "cancerGeneList.txt"),
         "cosmic_file": str(data_dir / "external" / "Cosmic_CancerGeneCensus_v102_GRCh38.tsv"),
+        "clinvar_vcf": str(data_dir / "external" / "clinvar.vcf"),
     }
 
 
@@ -217,7 +218,7 @@ DISCOVERED_TOP_MISSING_GENES = [
 ]
 
 
-ALL_IMPORTANT_GENES = list(
+ALL_IMPORTANT_GENES = sorted(
     set(
         FAVORABLE_GENES
         + ADVERSE_GENES
@@ -377,8 +378,8 @@ EXPERIMENT = {
     "use_center_ohe": False,
     "model_family": "rsf",
     "random_seed": SEED,
-    "prune_feature": False,
-    "prune_feature_threshold": 0.90,
+    "prune_feature": True,
+    "prune_feature_threshold": 0.95,
 }
 
 # Model parameters
@@ -467,6 +468,17 @@ MOLECULAR_EXTERNAL_SCORES = {
         # Set to False to skip contacting the API during prepare; cache will be used as-is.
         "prefetch_on_prepare": False,
     },
+    "clinvar": {
+        "enabled": True,
+        "vcf_path": DATA_PATHS.get("clinvar_vcf"),
+        "category_patterns": {
+            "pathogenic": ["Pathogenic"],
+            "likely_pathogenic": ["Likely_pathogenic"],
+            "benign": ["Benign"],
+            "uncertain": ["Uncertain"],
+            "conflicting": ["Conflicting"],
+        },
+    },
 }
 
 # How to exploit COSMIC tiers at patient-level
@@ -530,7 +542,26 @@ PRUNING_POLICY = {
         {"keep": "mut_", "drop": "_count"},
         {"keep": "log_", "drop": ""}, # drop original if log exists
         {"keep": "mean", "drop": "median"}
-    ]
+    ],
+    "rare_binary_protected_features": [
+        "CEBPA_high_VAF",
+        "IDH2_high_VAF",
+        "FLT3_TKD",
+        "triple_hit_epigenetic",
+        "cyto_normal_mol_adverse",
+    ],
+    "rare_feature_aggregations": [
+        {
+            "output_col": "has_rare_cyto_event",
+            "features": [
+                "incomplete_karyotype",
+                "n_ins",
+                "near_triploidy",
+                "t_9_11",
+            ],
+            "mode": "any",
+        }
+    ],
 }
 
 CLINICAL_COMPOSITE_SCORES = {

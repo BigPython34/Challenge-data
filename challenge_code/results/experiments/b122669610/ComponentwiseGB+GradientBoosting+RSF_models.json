@@ -1,0 +1,9 @@
+{
+  "chosen_models": [
+    "ComponentwiseGB",
+    "GradientBoosting",
+    "RSF"
+  ],
+  "timestamp": "20251121_191045",
+  "result":0.7664163811146133
+}

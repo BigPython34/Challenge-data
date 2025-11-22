@@ -1,7 +1,7 @@
 {
   "dataset": {
     "n_samples": 3120,
-    "n_features": 209
+    "n_features": 224
   },
   "cv": {
     "type": "GroupKFold",
@@ -100,7 +100,7 @@
   },
   "best_ensemble": {
     "name": "RSF + GradientBoosting + Cox + ComponentwiseGB",
-    "oof_ipcw": 0.7215702461584464,
+    "oof_ipcw": 0.7212377190321148,
     "tau": 7
   }
 }

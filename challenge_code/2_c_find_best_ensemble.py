@@ -12,13 +12,14 @@ Optionally, it writes a CSV report of base and ensemble scores.
 import os
 import itertools
 import json
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold, KFold
 from sksurv.metrics import concordance_index_ipcw
 from src.modeling.train import load_training_dataset_csv, get_survival_models
 from src.config import TAU, PREPROCESSING, EXPERIMENT
-from src.utils.experiment import compute_tag, ensure_experiment_dir
+from src.utils.experiment import compute_tag_with_signature, ensure_experiment_dir
 
 
 def main():
@@ -27,11 +28,9 @@ def main():
     print("=" * 80)
 
     # --- 0) TAG & EXPERIMENT DIR ---
-    cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
-    tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
+    tag, cfg_signature, _, _ = compute_tag_with_signature()
     exp_dir = ensure_experiment_dir(tag)
-    train_dir = os.path.join(exp_dir, "train")
-    os.makedirs(train_dir, exist_ok=True)
+    print(f"[INFO] Experiment tag: {tag} (config sig: {cfg_signature})")
 
     # --- 1) LOAD PROCESSED DATA ---
     print("\n[STEP 1/4] Loading processed training data...")
@@ -139,11 +138,11 @@ def main():
     summary_df.to_csv(summary_path, index=False)
     print(f"\nRanking saved to: {summary_path}")
     # Also save into experiment directory
-    summary_path_tag = os.path.join(train_dir, "ensemble_ranking.csv")
+    summary_path_tag = os.path.join(exp_dir, "ensemble_ranking.csv")
     summary_df.to_csv(summary_path_tag, index=False)
     # Save OOF predictions and fold scores
-    oof_predictions.to_csv(os.path.join(train_dir, "oof_predictions.csv"), index=True)
-    with open(os.path.join(train_dir, "fold_scores.json"), "w", encoding="utf-8") as f:
+    oof_predictions.to_csv(os.path.join(exp_dir, "oof_predictions.csv"), index=True)
+    with open(os.path.join(exp_dir, "fold_scores.json"), "w", encoding="utf-8") as f:
         json.dump(
             {
                 k: [None if pd.isna(v) else float(v) for v in vals]
@@ -169,8 +168,6 @@ def main():
         try:
             est.fit(X, y)
             out_path = os.path.join("models", f"model_{name}.joblib")
-            import joblib
-
             joblib.dump(est, out_path)
             print(f"  Saved: {out_path}")
         except Exception as e:
@@ -186,7 +183,7 @@ def main():
         json.dump(meta, f, indent=2)
     # Save training report
     with open(
-        os.path.join(train_dir, "training_report.json"), "w", encoding="utf-8"
+        os.path.join(exp_dir, "training_report.json"), "w", encoding="utf-8"
     ) as f:
         json.dump(training_report, f, indent=2)
 

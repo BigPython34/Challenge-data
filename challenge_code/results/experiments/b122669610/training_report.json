@@ -1,0 +1,106 @@
+{
+  "dataset": {
+    "n_samples": 3120,
+    "n_features": 188
+  },
+  "cv": {
+    "type": "GroupKFold",
+    "n_splits": 5
+  },
+  "models": {
+    "RSF": {
+      "bootstrap": true,
+      "low_memory": false,
+      "max_depth": 15,
+      "max_features": "sqrt",
+      "max_leaf_nodes": null,
+      "max_samples": null,
+      "min_samples_leaf": 10,
+      "min_samples_split": 20,
+      "min_weight_fraction_leaf": 0.0,
+      "n_estimators": 400,
+      "n_jobs": -1,
+      "oob_score": false,
+      "random_state": 42,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "GradientBoosting": {
+      "ccp_alpha": 0.0,
+      "criterion": "friedman_mse",
+      "dropout_rate": 0.0,
+      "learning_rate": 0.05,
+      "loss": "coxph",
+      "max_depth": 3,
+      "max_features": null,
+      "max_leaf_nodes": null,
+      "min_impurity_decrease": 0.0,
+      "min_samples_leaf": 20,
+      "min_samples_split": 40,
+      "min_weight_fraction_leaf": 0.0,
+      "n_estimators": 500,
+      "n_iter_no_change": null,
+      "random_state": 42,
+      "subsample": 0.7,
+      "tol": 0.0001,
+      "validation_fraction": 0.1,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "Cox": {
+      "alpha": 0.1,
+      "n_iter": 100,
+      "ties": "breslow",
+      "tol": 1e-09,
+      "verbose": 0
+    },
+    "CoxNet": {
+      "alpha_min_ratio": "auto",
+      "alphas": null,
+      "copy_X": true,
+      "fit_baseline_model": false,
+      "l1_ratio": 0.95,
+      "max_iter": 20000,
+      "n_alphas": 100,
+      "normalize": false,
+      "penalty_factor": null,
+      "tol": 1e-07,
+      "verbose": false
+    },
+    "ExtraTrees": {
+      "bootstrap": true,
+      "low_memory": false,
+      "max_depth": 15,
+      "max_features": "sqrt",
+      "max_leaf_nodes": null,
+      "max_samples": null,
+      "min_samples_leaf": 10,
+      "min_samples_split": 20,
+      "min_weight_fraction_leaf": 0.0,
+      "n_estimators": 400,
+      "n_jobs": -1,
+      "oob_score": false,
+      "random_state": 42,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "ComponentwiseGB": {
+      "dropout_rate": 0,
+      "learning_rate": 0.05,
+      "loss": "coxph",
+      "n_estimators": 400,
+      "random_state": 42,
+      "subsample": 0.7,
+      "verbose": 0,
+      "warm_start": false
+    }
+  },
+  "base_scores": {
+    "ComponentwiseGB": 0.7130669647539469
+  },
+  "best_ensemble": {
+    "name": "RSF + GradientBoosting + Cox + ComponentwiseGB",
+    "oof_ipcw": 0.7216043682086511,
+    "tau": 7
+  }
+}

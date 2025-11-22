@@ -10,13 +10,14 @@ from .myvariant_cleaner import MyVariantCleaner
 
 
 class ExternalDataManager:
-    """Combine COSMIC (v102 GRCh38) and OncoKB gene annotations; manage variant cache."""
+    """Combine COSMIC/OncoKB gene annotations, ClinVar signals, and variant caches."""
 
     def __init__(
         self,
         cosmic_path: str,
         oncokb_path: str,
         variant_cache_path: str = "datas/external/variant_cache.json",
+        clinvar_path: Optional[str] = None,
     ) -> None:
         cosmic_info = self._load_cosmic(cosmic_path)
         oncokb_info = self._load_oncokb(oncokb_path)
@@ -28,6 +29,11 @@ class ExternalDataManager:
         self.myvariant_cleaned_path = os.path.join("datas", "variant_data_bis.jsonl")
         self.variant_annotations: Dict[str, dict] = self._load_myvariant_cleaned(
             self.myvariant_cleaned_path
+        )
+        self.clinvar_lookup: Dict[str, str] = (
+            self._load_clinvar_annotations(clinvar_path)
+            if clinvar_path
+            else {}
         )
 
     # ---------------- COSMIC -----------------
@@ -256,6 +262,123 @@ class ExternalDataManager:
     def _save_variant_cache(self) -> None:
         with open(self.variant_cache_path, "w", encoding="utf-8") as f:
             json.dump(self.variant_scores, f)
+
+    def _load_clinvar_annotations(self, path: Optional[str]) -> Dict[str, str]:
+        if not path:
+            return {}
+        if not os.path.exists(path):
+            print(f"[ExternalData] Fichier ClinVar introuvable: {path}")
+            return {}
+        print("[ExternalData] Chargement de ClinVar (peut être long)...")
+
+        header_cols: Optional[list[str]] = None
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                for line in handle:
+                    if line.startswith("#CHROM"):
+                        header_cols = line.lstrip("#").strip().split("\t")
+                        break
+        except Exception as exc:  # noqa: BLE001
+            print(f"   [AVERTISSEMENT] Lecture préliminaire de ClinVar impossible: {exc}")
+            return {}
+
+        if not header_cols or not {"CHROM", "POS", "REF", "ALT", "INFO"}.issubset(
+            header_cols
+        ):
+            print(
+                "   [AVERTISSEMENT] Impossible d'identifier l'en-tête ClinVar (colonnes CHROM, POS, REF, ALT, INFO)."
+            )
+            return {}
+
+        try:
+            clinvar_df = pd.read_csv(
+                path,
+                sep="\t",
+                comment="#",
+                compression="infer",
+                dtype=str,
+                names=header_cols,
+                header=None,
+                engine="python",
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"   [AVERTISSEMENT] Impossible de lire ClinVar: {exc}")
+            return {}
+
+        required = {"CHROM", "POS", "REF", "ALT", "INFO"}
+        missing_cols = required - set(clinvar_df.columns)
+        if missing_cols:
+            print(
+                "   [AVERTISSEMENT] Colonnes requises manquantes dans ClinVar (CHROM, POS, REF, ALT, INFO)."
+            )
+            return {}
+
+        df = clinvar_df[list(required)].copy()
+        df = df[~df["ALT"].astype(str).str.contains(",", na=False)]
+        df["CLNSIG"] = df["INFO"].astype(str).str.extract(r"CLNSIG=([^;]+)")
+        df = df.dropna(subset=["CLNSIG"])
+        df["POS"] = pd.to_numeric(df["POS"], errors="coerce").astype("Int64")
+        df = df.dropna(subset=["POS", "REF", "ALT"])
+        if df.empty:
+            return {}
+
+        chrom = df["CHROM"].astype(str).str.replace(r"^chr", "", regex=True).str.strip()
+        variant_ids = (
+            "chr"
+            + chrom
+            + ":g."
+            + df["POS"].astype(int).astype(str)
+            + df["REF"].astype(str)
+            + ">"
+            + df["ALT"].astype(str)
+        )
+        df["variant_id"] = variant_ids
+        dedup = df.dropna(subset=["variant_id"]).drop_duplicates("variant_id")
+        print(f"   -> {len(dedup)} variants ClinVar indexés.")
+        return dedup.set_index("variant_id")["CLNSIG"].to_dict()
+
+    @staticmethod
+    def _build_variant_id_series(df: pd.DataFrame) -> Optional[pd.Series]:
+        required = {"CHR", "START", "REF", "ALT"}
+        if not required.issubset(df.columns):
+            return None
+        tmp = df[list(required)].copy()
+        tmp["CHR"] = tmp["CHR"].astype(str).str.replace(r"^chr", "", regex=True).str.strip()
+        tmp["START"] = pd.to_numeric(tmp["START"], errors="coerce").astype("Int64")
+        tmp["REF"] = tmp["REF"].astype(str).str.strip()
+        tmp["ALT"] = tmp["ALT"].astype(str).str.strip()
+        tmp = tmp.dropna(subset=["CHR", "START", "REF", "ALT"])
+        if tmp.empty:
+            return None
+        variant_ids = (
+            "chr"
+            + tmp["CHR"]
+            + ":g."
+            + tmp["START"].astype(int).astype(str)
+            + tmp["REF"]
+            + ">"
+            + tmp["ALT"]
+        )
+        series = pd.Series(index=df.index, dtype=object)
+        series.loc[tmp.index] = variant_ids
+        return series
+
+    def merge_clinvar_annotations(self, maf_df: pd.DataFrame) -> pd.DataFrame:
+        if maf_df is None or maf_df.empty or not self.clinvar_lookup:
+            return maf_df
+        variant_ids = self._build_variant_id_series(maf_df)
+        if variant_ids is None:
+            return maf_df
+        annotated = maf_df.copy()
+        annotated["clinvar_variant_id"] = variant_ids
+        annotated["clinvar_clnsig"] = annotated["clinvar_variant_id"].map(
+            self.clinvar_lookup
+        )
+        return annotated
+
+    @property
+    def has_clinvar_annotations(self) -> bool:
+        return bool(self.clinvar_lookup)
 
     def fetch_and_cache_cadd_scores(self, variants_df: pd.DataFrame) -> None:
         print("[ExternalData] Récupération des scores de pathogénicité (CADD)...")

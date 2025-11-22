@@ -9,7 +9,11 @@ import joblib
 import pandas as pd
 import numpy as np
 from src.config import PREPROCESSING, EXPERIMENT
-from src.utils.experiment import compute_tag, ensure_experiment_dir, save_predictions
+from src.utils.experiment import (
+    compute_tag_with_signature,
+    ensure_experiment_dir,
+    save_predictions,
+)
 
 
 def list_saved_models(models_dir: str = "models"):
@@ -41,10 +45,9 @@ def predict_and_submit():
     print("=" * 60)
 
     # Compute experiment tag and show key preprocessing settings
-    cfg_slice = {"PREPROCESSING": PREPROCESSING, "EXPERIMENT": EXPERIMENT}
-    tag = compute_tag(cfg_slice, prefix=EXPERIMENT.get("name"))
+    tag, cfg_signature, _, _ = compute_tag_with_signature()
     exp_dir = ensure_experiment_dir(tag)
-    print(f"Experiment tag: {tag}")
+    print(f"Experiment tag: {tag} (config sig: {cfg_signature})")
     print("[REPORT] Preprocessing settings:")
     print(
         f"  - imputer: {PREPROCESSING.get('imputer')}\n"
