@@ -11,13 +11,16 @@ RESULTS_DIR = BASE_DIR / "results"
 
 def _build_data_paths(base_dir: Path) -> dict[str, str]:
     data_dir = base_dir / "datas"
+    output_dir = base_dir / "datasets_processed"
     return {
         "input_clinical_train": str(data_dir / "X_train" / "clinical_train.csv"),
         "input_molecular_train": str(data_dir / "X_train" / "molecular_train_filled.csv"),
         "input_target_train": str(data_dir / "target_train.csv"),
         "input_clinical_test": str(data_dir / "X_test" / "clinical_test.csv"),
         "input_molecular_test": str(data_dir / "X_test" / "molecular_test_filled.csv"),
-        "output_dir": str(base_dir / "datasets_processed"),
+        "output_dir": str(output_dir),
+        "center_group_train": str(output_dir / "center_group_train.csv"),
+        "center_group_test": str(output_dir / "center_group_test.csv"),
         "oncokb_file": str(data_dir / "external" / "cancerGeneList.txt"),
         "cosmic_file": str(data_dir / "external" / "Cosmic_CancerGeneCensus_v102_GRCh38.tsv"),
         "clinvar_vcf": str(data_dir / "external" / "clinvar.vcf"),
@@ -69,8 +72,18 @@ CLINICAL_LOG_COLUMNS = ["WBC", "PLT", "ANC", "MONOCYTES"]
 CREATE_LOG_COLUMNS = False
 MISSINGNESS_POLICY = {
     "create_indicators": True,
-    "keep_columns": ["WBC", "HB", "PLT", "ANC", "MONOCYTES"],
+    "keep_columns": CLINICAL_NUMERIC_COLUMNS,
     "drop_non_kept_indicators": True,
+}
+
+DATA_PROFILE_STRATEGY = {
+    "mode": "profile_feature",  # single_model + binary indicator feature
+    "profile_column": "CLINICAL_PROFILE_IMPUTED",
+    "clinical_columns": CLINICAL_NUMERIC_COLUMNS,
+    "profile_feature": {
+        "enabled": True,
+        "treat_as_categorical": False,
+    },
 }
 
 CENTER_GROUPING = {
@@ -91,6 +104,9 @@ SPECIFIC_ABNORMALITIES_TO_FLAG = {
     "del_17p_or_i17q": r"del\s*\(\s*17\s*\)\s*\(p|i\s*\(\s*17\s*\)\s*\(q|17p-",
     "rearr_3q26": r"inv\(3\).*q26|t\(3;.*\).*q26|t\(.*;3\).*q26",
     "del_12p": r"del\s*\(\s*12\s*\)\s*\(p",
+    "monosomy_X": r"-\s*x(?![a-z0-9])|\bmono(?:somy)?\s*x",
+    "trisomy_X": r"\+\s*x(?![a-z0-9])|\btris(?:omy|omia)?\s*x",
+    "trisomy_Y": r"\+\s*y(?![a-z0-9])|\btris(?:omy|omia)?\s*y",
 }
 
 CYTOGENETIC_COMMON_MONOSOMIES = [
@@ -283,9 +299,9 @@ REDUNDANCY_POLICY = {
     "drop_count_when_any_exists": False,
     "drop_sex_numeric_if_ohe": True,
     "prune_missingness_indicators": True,
-    "explicit_drop": ["CENTER"]
+    "explicit_drop": []
 }
-RARE_EVENT_PRUNING_TRESHOLD = 0.005
+RARE_EVENT_PRUNING_THRESHOLD = 0.0
 COMPLEX_ABNORMALITIES_CAP = 12
 
 
@@ -312,7 +328,7 @@ PREPROCESSING = {
         "model_path": os.path.join(MODEL_DIR, "monocyte_imputer.joblib"),
         "predictors": {
             "num": ["WBC", "ANC", "HB", "PLT", "BM_BLAST"],
-            "cat": ["CENTER"],
+            "cat": [],
         },
         "preprocessing": {
             "num_imputer": "median",  
@@ -333,6 +349,12 @@ PREPROCESSING = {
     "clip_quantiles": {"lower": 0.01, "upper": 0.99},
     "numeric_scaler": "robust",
     "drop_zero_variance": True,
+    "zero_variance_protected_columns": [
+        "MONOCYTES_missing",
+    ],
+    "zero_variance_protected_prefixes": [
+        "CENTER_",
+    ],
     "auto_detect_continuous_features": False,
     "continuous_threshold": 20,
     "continuous_features": CLINICAL_NUMERIC_COLUMNS
@@ -534,7 +556,7 @@ FEATURE_INTERACTIONS = {
 }
 
 PRUNING_POLICY = {
-    "rare_feature_threshold": RARE_EVENT_PRUNING_TRESHOLD,
+    "rare_feature_threshold": RARE_EVENT_PRUNING_THRESHOLD,
     "correlation_threshold": 0.95,
     "default_id_cols": ["ID", "CENTER_GROUP"],
     "priority_rules": [
@@ -586,19 +608,30 @@ CLINICAL_COMPOSITE_SCORES = {
 
 CYTOGENETIC_EVENT_PATTERNS = {
     "n_t": r"t\(",
-    "n_del": r"del\(|del,",
+    "n_del": r"del\(|del,|\bdel\b",
     "n_inv": r"inv\(",
-    "n_add": r"add\(",
+    "n_add": r"add\(|\badd\b",
     "n_der": r"der\(",
     "n_ins": r"ins\(",
     "n_i": r"i\(",
     "n_dic": r"dic\(",
-    "n_ring": r"r\(",
-    "n_mar": r"\+mar",
+    "n_ring": r"(?:r\(|\+r[a-z0-9]*(?:\[[^\]]+\])?)",
+    "n_mar": r"[+-]\s*m(?:ar)?[a-z0-9]*(?:\[[^\]]+\])?",
     "n_dmin": r"dmin",
     "n_plus": r"\+",
     "n_minus": r"-",
+    "chromosome_range_flag": r"\b\d{2}\s*[-~]\s*\d{2}\b",
 }
+
+CYTOGENETIC_NORMALIZATION_RULES = [
+    {"pattern": r"order\s*(?=\()", "replacement": "der"},
+    {"pattern": r"ordel\s*(?=\()", "replacement": "del"},
+    {"pattern": r"\b9ph\b", "replacement": "t(9;22)"},
+    {"pattern": r"\bph\s*\+\b", "replacement": "t(9;22)"},
+    {"pattern": r"(?i)([+-]\s*[xy])\s*\[[0-9]+\]", "replacement": r"\1"},
+    {"pattern": r"(?i)([+-]\s*m(?:ar)?[a-z0-9]*)\s*\[[0-9]+\]", "replacement": r"\1"},
+    {"pattern": r"(?i)([+-]\s*r[a-z0-9]*)\s*\[[0-9]+\]", "replacement": r"\1"},
+]
 
 CYTOGENETIC_PARSING_REGEX = {
     "normal_string": r"normal",

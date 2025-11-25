@@ -1,0 +1,59 @@
+name,size,score
+RSF + GradientBoosting + Cox + ComponentwiseGB,4,0.7208419116266633
+RSF + GradientBoosting + CoxNet + ComponentwiseGB,4,0.7206448834080087
+RSF + GradientBoosting + CoxNet,3,0.7201439540025552
+RSF + GradientBoosting + Cox + CoxNet + ComponentwiseGB,5,0.7200158441791652
+RSF + GradientBoosting + Cox,3,0.7200088824635281
+RSF + GradientBoosting + Cox + ExtraTrees + ComponentwiseGB,5,0.7198280213234838
+GradientBoosting + CoxNet + ComponentwiseGB,3,0.7198161696097305
+RSF + GradientBoosting + Cox + CoxNet + ExtraTrees + ComponentwiseGB,6,0.7197282723784976
+GradientBoosting + Cox + ExtraTrees + ComponentwiseGB,4,0.7197222863934516
+GradientBoosting + CoxNet + ExtraTrees + ComponentwiseGB,4,0.7196717626884399
+RSF + GradientBoosting + ComponentwiseGB,3,0.7196297295382834
+RSF + GradientBoosting + CoxNet + ExtraTrees + ComponentwiseGB,5,0.7196171238142902
+GradientBoosting + ComponentwiseGB,2,0.7195931118487223
+GradientBoosting + Cox + ComponentwiseGB,3,0.719331912916645
+RSF + CoxNet + ComponentwiseGB,3,0.7191891429748023
+RSF + GradientBoosting + Cox + CoxNet + ExtraTrees,5,0.7191048838504037
+GradientBoosting + Cox + CoxNet + ExtraTrees + ComponentwiseGB,5,0.7190984474385614
+RSF + Cox + ComponentwiseGB,3,0.7190070413253907
+GradientBoosting + CoxNet + ExtraTrees,3,0.7189618260752497
+RSF + GradientBoosting + Cox + CoxNet,4,0.7189584079171804
+RSF + GradientBoosting + Cox + ExtraTrees,4,0.7189440309495987
+RSF + GradientBoosting + CoxNet + ExtraTrees,4,0.7188306434450571
+GradientBoosting + Cox + ExtraTrees,3,0.7187605717143655
+RSF + GradientBoosting,2,0.718588809997822
+GradientBoosting + ExtraTrees + ComponentwiseGB,3,0.7184920675068139
+RSF + Cox + CoxNet + ExtraTrees + ComponentwiseGB,5,0.7183798893805744
+RSF + CoxNet,2,0.7183791363744505
+RSF + Cox + CoxNet + ComponentwiseGB,4,0.7183441310031172
+GradientBoosting + CoxNet,2,0.7182703138911273
+GradientBoosting + Cox + CoxNet + ComponentwiseGB,4,0.7182685730288909
+GradientBoosting + Cox + CoxNet + ExtraTrees,4,0.7180023370686871
+RSF + Cox + ExtraTrees + ComponentwiseGB,4,0.7179110150661029
+RSF + GradientBoosting + ExtraTrees + ComponentwiseGB,4,0.7179058840475943
+RSF + CoxNet + ExtraTrees + ComponentwiseGB,4,0.7177348040527606
+CoxNet + ExtraTrees + ComponentwiseGB,3,0.7172270093169568
+RSF + Cox,2,0.7171907803791598
+RSF + Cox + CoxNet + ExtraTrees,4,0.7170110444947106
+GradientBoosting + ExtraTrees,2,0.7169847073892769
+Cox + CoxNet + ExtraTrees + ComponentwiseGB,4,0.7169256357915496
+Cox + ExtraTrees + ComponentwiseGB,3,0.7168386050426765
+RSF + ComponentwiseGB,2,0.7168061025118321
+GradientBoosting + Cox,2,0.7167987169954559
+CoxNet + ComponentwiseGB,2,0.7165507806283256
+RSF + CoxNet + ExtraTrees,3,0.7164222217505016
+RSF + Cox + CoxNet,3,0.7162977137940393
+RSF + GradientBoosting + ExtraTrees,3,0.7162702120049321
+RSF + Cox + ExtraTrees,3,0.716166030980702
+GradientBoosting + Cox + CoxNet,3,0.7155335184745127
+CoxNet + ExtraTrees,2,0.7150453932605988
+Cox + ComponentwiseGB,2,0.7150408314455063
+Cox + CoxNet + ComponentwiseGB,3,0.7145873218740393
+RSF + ExtraTrees + ComponentwiseGB,3,0.7145713308122281
+Cox + CoxNet + ExtraTrees,3,0.7141189279709106
+Cox + ExtraTrees,2,0.7137213260648149
+ExtraTrees + ComponentwiseGB,2,0.7136864802105998
+ComponentwiseGB,1,0.712527402343934
+RSF + ExtraTrees,2,0.7099288197034267
+Cox + CoxNet,2,0.7067890928570316

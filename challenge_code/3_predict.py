@@ -9,6 +9,11 @@ import joblib
 import pandas as pd
 import numpy as np
 from src.config import PREPROCESSING, EXPERIMENT
+from src.modeling.profile_strategy import (
+    get_profile_mode,
+    route_inference_rows,
+    align_features_for_subset,
+)
 from src.utils.experiment import (
     compute_tag_with_signature,
     ensure_experiment_dir,
@@ -22,6 +27,14 @@ def list_saved_models(models_dir: str = "models"):
         os.path.splitext(os.path.basename(p))[0].replace("model_", "") for p in paths
     ]
     return names, paths
+
+
+def model_subset_from_name(name: str) -> str:
+    if name.endswith("_complete"):
+        return "complete"
+    if name.endswith("_molecular"):
+        return "molecular"
+    return "default"
 
 
 def prompt_model_selection(names):
@@ -59,18 +72,42 @@ def predict_and_submit():
     # 1) Load processed test data
     print("\n1) Loading processed test data...")
     X_test_path = "datasets_processed/X_test_processed.csv"
-    X_test = pd.read_csv(X_test_path)
-    ids = X_test["ID"].copy()
-    # Drop non-features if present
-    for c in ["ID", "CENTER_GROUP"]:
-        if c in X_test.columns:
-            X_test = X_test.drop(columns=[c])
+    raw_test = pd.read_csv(X_test_path)
+    ids = raw_test["ID"].copy()
+    feature_df = raw_test.drop(columns=["ID", "CENTER_GROUP"], errors="ignore")
+
+    strategy_mode = get_profile_mode()
+    print(f"[INFO] Profile strategy mode: {strategy_mode}")
+
+    subset_frames = {}
+    if strategy_mode == "dual_model":
+        masks = route_inference_rows(feature_df)
+        for label in ["complete", "molecular"]:
+            mask = masks.get(label)
+            if mask is None or not mask.any():
+                continue
+            subset_frames[label] = align_features_for_subset(feature_df.loc[mask], label)
+        if not subset_frames:
+            raise ValueError(
+                "Dual-model inference requires at least one routable subset with recorded features."
+            )
+    else:
+        subset_frames["default"] = align_features_for_subset(feature_df, "default")
+
+    required_subsets = set(subset_frames.keys())
 
     # 2) List and choose models
     names, paths = list_saved_models()
     if not names:
         print("No saved base models found in 'models/'. Please run training first.")
         return
+    if strategy_mode == "dual_model":
+        names = [n for n in names if model_subset_from_name(n) in required_subsets]
+        if not names:
+            print(
+                "No subset-specific models detected. Ensure dual-model training has been executed."
+            )
+            return
     try:
         chosen = prompt_model_selection(names)
     except Exception as e:
@@ -78,16 +115,50 @@ def predict_and_submit():
         return
     print(f"Chosen models: {chosen}")
 
-    # 3) Load chosen models and predict
-    preds = []
+    subset_model_map = {}
     for nm in chosen:
-        p = os.path.join("models", f"model_{nm}.joblib")
-        est = joblib.load(p)
-        pred = est.predict(X_test)
-        preds.append(pd.Series(pred).rank(method="average").values)
+        subset = model_subset_from_name(nm)
+        subset_model_map.setdefault(subset, []).append(nm)
 
-    # Average ranks for ensemble score
-    ensemble_score = np.mean(np.vstack(preds), axis=0)
+    missing_subsets = [lbl for lbl in required_subsets if lbl not in subset_model_map]
+    if missing_subsets:
+        print(
+            f"Selection error: missing models for subsets {missing_subsets}. Choose at least one model per active subset."
+        )
+        return
+
+    # 3) Load chosen models and predict
+    if strategy_mode == "dual_model":
+        final_scores = pd.Series(index=feature_df.index, dtype=float)
+        for subset_label, subset_df in subset_frames.items():
+            models_for_subset = subset_model_map.get(subset_label, [])
+            subset_preds = []
+            for nm in models_for_subset:
+                p = os.path.join("models", f"model_{nm}.joblib")
+                est = joblib.load(p)
+                pred = pd.Series(est.predict(subset_df), index=subset_df.index)
+                subset_preds.append(pred.rank(method="average"))
+            if not subset_preds:
+                raise ValueError(
+                    f"No models selected for subset '{subset_label}' while samples are present."
+                )
+            subset_stack = np.vstack([pred.values for pred in subset_preds])
+            subset_scores = subset_stack.mean(axis=0)
+            final_scores.loc[subset_df.index] = subset_scores
+        if final_scores.isna().any():
+            raise RuntimeError("Missing predictions for some samples in dual-model mode.")
+        ensemble_score = final_scores.loc[feature_df.index].values
+    else:
+        preds = []
+        default_df = subset_frames["default"]
+        for nm in subset_model_map.get("default", []):
+            p = os.path.join("models", f"model_{nm}.joblib")
+            est = joblib.load(p)
+            pred = pd.Series(est.predict(default_df), index=default_df.index)
+            preds.append(pred.rank(method="average").values)
+        if not preds:
+            raise ValueError("No models selected for default subset.")
+        ensemble_score = np.mean(np.vstack(preds), axis=0)
     print(f"Generated predictions for {len(ensemble_score)} samples.")
 
     # 4) Save submission with model names in filename and in experiment dir

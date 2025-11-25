@@ -9,7 +9,7 @@ from src.config import (
     EXPERIMENT,
     CLINICAL_RANGES,
     MOLECULAR_EXTERNAL_SCORES,
-    RARE_EVENT_PRUNING_TRESHOLD,
+    RARE_EVENT_PRUNING_THRESHOLD,
     DATA_PATHS,
     ID_COLUMNS,
     TARGET_COLUMNS,
@@ -18,6 +18,7 @@ from src.config import (
     REDUNDANCY_POLICY,
     MODEL_DIR,
     FLOAT32_POLICY,
+    DATA_PROFILE_STRATEGY,
 )
 from src.utils.experiment import (
     save_manifest,
@@ -25,6 +26,8 @@ from src.utils.experiment import (
     ensure_experiment_dir,
     compute_tag_with_signature,
 )
+
+from src.utils.data_profile import annotate_profile_column
 
 
 
@@ -281,6 +284,13 @@ def main():
             clinical_train_raw, molecular_train_raw, target_train_raw
         )
     )
+    profile_col = DATA_PROFILE_STRATEGY.get("profile_column", "DATA_PROFILE")
+    profile_fallback_label = (
+        DATA_PROFILE_STRATEGY.get("grouping", {}).get("fallback", "complete")
+    )
+    clinical_train_clean = annotate_profile_column(
+        clinical_train_clean, molecular_train_clean, dataset_name="train"
+    )
     fake_target_test = pd.DataFrame(
         {
             ID_COLUMNS["patient"]: clinical_test_raw[ID_COLUMNS["patient"]],
@@ -290,6 +300,9 @@ def main():
     )
     clinical_test_clean, molecular_test_clean, _ = clean_and_validate_data(
         clinical_test_raw, molecular_test_raw, fake_target_test
+    )
+    clinical_test_clean = annotate_profile_column(
+        clinical_test_clean, molecular_test_clean, dataset_name="test"
     )
     train_df = pd.merge(
         clinical_train_clean, target_train_clean, on=ID_COLUMNS["patient"], how="inner"
@@ -429,6 +442,21 @@ def main():
         data_manager=data_manager,
     )
 
+    profile_map_train = (
+        X_train_featured.set_index(ID_COLUMNS["patient"])[profile_col]
+        .astype(str)
+        .to_dict()
+        if profile_col in X_train_featured.columns
+        else {}
+    )
+    profile_map_test = (
+        X_test_featured.set_index(ID_COLUMNS["patient"])[profile_col]
+        .astype(str)
+        .to_dict()
+        if profile_col in X_test_featured.columns
+        else {}
+    )
+
     feature_auto_cast = FLOAT32_POLICY.get("auto_detect_feature_frames", False)
     X_train_featured = apply_float32_policy(
         X_train_featured,
@@ -504,6 +532,9 @@ def main():
     X_test_processed_df.insert(0, ID_COLUMNS["patient"], test_ids.values)
 
 
+    center_meta_train = None
+    center_meta_test = None
+
     try:
         center_map_train = train_df.set_index(ID_COLUMNS["patient"])[ID_COLUMNS["center"]].astype(str)
         center_map_test = test_df.set_index(ID_COLUMNS["patient"])[ID_COLUMNS["center"]].astype(str)
@@ -523,14 +554,37 @@ def main():
             .fillna("CENTER_OTHER")
             .values,
         )
+        center_meta_train = X_train_processed_df[[ID_COLUMNS["patient"], "CENTER_GROUP"]].copy()
+        center_meta_test = X_test_processed_df[[ID_COLUMNS["patient"], "CENTER_GROUP"]].copy()
     except Exception as e:  # noqa: BLE001
         print(f"[PREP] Impossible d'ajouter CENTER_GROUP (continuons sans): {e}")
 
-
+    if profile_col in X_train_featured.columns and profile_col not in X_train_processed_df.columns:
+        X_train_processed_df.insert(
+            2,
+            profile_col,
+            X_train_processed_df[ID_COLUMNS["patient"]]
+            .map(profile_map_train)
+            .fillna(profile_fallback_label)
+            .values,
+        )
+    if profile_col in X_test_featured.columns and profile_col not in X_test_processed_df.columns:
+        X_test_processed_df.insert(
+            2,
+            profile_col,
+            X_test_processed_df[ID_COLUMNS["patient"]]
+            .map(profile_map_test)
+            .fillna(profile_fallback_label)
+            .values,
+        )
     if PREPROCESSING.get("drop_zero_variance", True):
+        protected_cols = set(PREPROCESSING.get("zero_variance_protected_columns", []))
+        protected_prefixes = PREPROCESSING.get("zero_variance_protected_prefixes", [])
         drop_cols = []
         for col in X_train_processed_df.columns:
             if col in [ID_COLUMNS["patient"], "CENTER_GROUP"]:
+                continue
+            if col in protected_cols or any(col.startswith(pref) for pref in protected_prefixes):
                 continue
             nunique_train = X_train_processed_df[col].nunique(dropna=False)
             nunique_test = X_test_processed_df[col].nunique(dropna=False)
@@ -545,6 +599,11 @@ def main():
         X_test_processed_df.drop(columns=drop_cols, inplace=True, errors="ignore")
     else:
         print("[PREPROCESSING] Suppression des colonnes à variance nulle désactivée.")
+
+    if "CENTER_GROUP" in X_train_processed_df.columns:
+        X_train_processed_df.drop(columns=["CENTER_GROUP"], inplace=True, errors="ignore")
+    if "CENTER_GROUP" in X_test_processed_df.columns:
+        X_test_processed_df.drop(columns=["CENTER_GROUP"], inplace=True, errors="ignore")
 
 
     try:
@@ -569,7 +628,7 @@ def main():
     X_train_processed_df, X_test_processed_df = prune_rare_binary_features(
         X_train_processed_df,
         X_test_processed_df,
-        RARE_EVENT_PRUNING_TRESHOLD,
+        RARE_EVENT_PRUNING_THRESHOLD,
         ["ID", "CENTER_GROUP"],
     )
 
@@ -604,6 +663,11 @@ def main():
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     joblib.dump(preprocessor, os.path.join(MODEL_DIR, "preprocessor.joblib"))
+
+    if center_meta_train is not None:
+        center_meta_train.to_csv(DATA_PATHS.get("center_group_train"), index=False)
+    if center_meta_test is not None:
+        center_meta_test.to_csv(DATA_PATHS.get("center_group_test"), index=False)
 
 
     try:

@@ -168,6 +168,20 @@ Le fichier `src/config.py` centralise :
 - **Gènes d'intérêt** : 12 gènes clés pour l'AML
 - **Reproductibilité** : Seed fixe pour tous les algorithmes
 
+### ⚖️ `DATA_PROFILE_STRATEGY` (nouveau)
+
+Ce bloc de configuration pilote la façon dont le pipeline gère les profils de disponibilité des données (patients « complets » versus profils uniquement moléculaires) et garantit que les colonnes indicatrices de valeurs manquantes ne sont jamais supprimées lorsqu'elles servent d'entrée au modèle.
+
+- `mode` :
+	- `single_model` *(défaut)* → Un seul ensemble d'entraînement. Les colonnes `_missing` générées par la préparation restent toujours disponibles.
+	- `dual_model` → `2_c_find_best_ensemble.py` entraîne deux sous-modèles (`complete`, `molecular`). Les colonnes utilisées pour chaque sous-modèle sont sauvegardées dans `models/feature_subset_<label>.json` et réutilisées par `3_predict.py` pour réaligner les features à l'inférence.
+	- `profile_feature` → Le profil (`profile_column`) est laissé dans les features et traité comme une variable catégorielle additionnelle.
+- `profile_column` : nom de la colonne insérée par `1_prepare_data.py` (par défaut `DATA_PROFILE`).
+- `assignment_labels` / `grouping` : définissent les étiquettes écrites dans les jeux de données bruts et la façon dont elles sont regroupées pendant l'entraînement ou l'inférence.
+- `dual_model` : précise les préfixes ou colonnes moléculaires à conserver pour le sous-modèle `molecular`.
+
+> 🔁 **Workflow** : dès que vous modifiez `DATA_PROFILE_STRATEGY`, relancez `python 1_prepare_data.py`, puis `python 2_c_find_best_ensemble.py` et enfin `python 3_predict.py` afin de régénérer les jeux de données traités, les modèles spécialisés et les manifestes de colonnes.
+
 ## 🔧 Outils & Scripts Utilitaires
 
 ```bash

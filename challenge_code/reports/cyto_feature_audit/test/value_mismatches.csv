@@ -1,0 +1,32 @@
+ID,feature,processed_value,expected_value,raw_cytogenetics
+KYW22,SEX_XY,1.0,,
+KYW11,chromosome_count,46.0,,Normal
+KYW13,chromosome_count,46.0,,Normal
+KYW14,chromosome_count,46.0,,Normal
+KYW15,chromosome_count,46.0,,Normal
+KYW16,chromosome_count,46.0,,Abnormal(not examined)
+KYW17,chromosome_count,46.0,,Normal
+KYW18,chromosome_count,46.0,,Normal
+KYW22,chromosome_count,46.0,,
+KYW23,chromosome_count,46.0,,Normal
+KYW4,chromosome_count,46.0,,Normal
+KYW6,chromosome_count,46.0,,Normal
+KYW9,chromosome_count,46.0,,Normal
+KYW22,clone_count,1.0,,
+KYW22,eln_cyto_intermediate,1.0,,
+KYW22,main_clone_cell_count,18.0,,
+KYW22,normal_karyotype,1.0,,
+KYW20,num_cyto_abnormalities,3.8947368,3.8947368421052633,"45, XY, der(2)t(2;12)(q37;q13), add(4)(q21), del(5)(q?), del(7)(q?), -12, add(12)(p11.2) [10]/45, idem, del(1)(p?) [2]/46, XY [7]"
+KYW11,sex_chromosomes,1.0,,Normal
+KYW13,sex_chromosomes,1.0,,Normal
+KYW14,sex_chromosomes,1.0,,Normal
+KYW15,sex_chromosomes,1.0,,Normal
+KYW16,sex_chromosomes,1.0,,Abnormal(not examined)
+KYW17,sex_chromosomes,1.0,,Normal
+KYW18,sex_chromosomes,1.0,,Normal
+KYW22,sex_chromosomes,1.0,,
+KYW23,sex_chromosomes,1.0,,Normal
+KYW4,sex_chromosomes,1.0,,Normal
+KYW6,sex_chromosomes,1.0,,Normal
+KYW9,sex_chromosomes,1.0,,Normal
+KYW22,total_cell_count,20.0,,

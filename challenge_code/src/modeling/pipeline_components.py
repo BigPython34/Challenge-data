@@ -6,7 +6,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from ..data.data_cleaning.imputer import AdvancedImputer
 from ..data.data_cleaning.cleaner import ClipQuantiles
-from ..config import PREPROCESSING
+from ..config import PREPROCESSING, DATA_PROFILE_STRATEGY
 
 
 def get_preprocessing_pipeline(
@@ -22,6 +22,13 @@ def get_preprocessing_pipeline(
     
 
     categorical_features = [col for col in ["CENTER", "CENTER_GROUP"] if col in X_train_df.columns]
+    profile_col = DATA_PROFILE_STRATEGY.get("profile_column")
+    profile_cfg = DATA_PROFILE_STRATEGY.get("profile_feature", {})
+    profile_enabled = profile_cfg.get("enabled") and profile_col and profile_col in X_train_df.columns
+    treat_profile_as_cat = profile_enabled and profile_cfg.get("treat_as_categorical", True)
+    if treat_profile_as_cat:
+        categorical_features.append(profile_col)
+    categorical_features = list(dict.fromkeys(categorical_features))
 
 
     continuous_features = PREPROCESSING["continuous_features"]
@@ -39,7 +46,17 @@ def get_preprocessing_pipeline(
     
     for col in potential_discrete_features:
         # Est-ce une feature binaire (0/1) ? (y compris les _missing)
-        if X_train_df[col].nunique() <= 2 and ('mut_' in col or '_missing' in col or '_altered' in col or 'any_' in col or 'has_' in col):
+        if (
+            X_train_df[col].nunique() <= 2
+            and (
+                'mut_' in col
+                or '_missing' in col
+                or '_altered' in col
+                or 'any_' in col
+                or 'has_' in col
+                or (profile_enabled and not treat_profile_as_cat and col == profile_col)
+            )
+        ):
             binary_features.append(col)
         # Est-ce un comptage ?
         elif 'count' in col or 'num_' in col or 'total_mutations' in col:

@@ -1,0 +1,1039 @@
+{
+  "ADVERSE_GENES": [
+    "TP53",
+    "ASXL1",
+    "RUNX1",
+    "BCOR",
+    "EZH2",
+    "SF3B1",
+    "SRSF2",
+    "STAG2",
+    "U2AF1",
+    "ZRSR2"
+  ],
+  "ALL_IMPORTANT_GENES": [
+    "ARID2",
+    "ASXL1",
+    "ASXL2",
+    "BCOR",
+    "BCORL1",
+    "BRCC3",
+    "CBL",
+    "CEBPA",
+    "CREBBP",
+    "CSF3R",
+    "CSNK1A1",
+    "CTCF",
+    "CUX1",
+    "DDX41",
+    "DNMT3A",
+    "EED",
+    "EP300",
+    "ETNK1",
+    "ETV6",
+    "EZH2",
+    "FLT3",
+    "GATA2",
+    "GNAS",
+    "GNB1",
+    "IDH1",
+    "IDH2",
+    "JAK2",
+    "KDM6A",
+    "KIT",
+    "KMT2C",
+    "KMT2D",
+    "KRAS",
+    "MLL",
+    "MPL",
+    "NF1",
+    "NFE2",
+    "NPM1",
+    "NRAS",
+    "PHF6",
+    "PPM1D",
+    "PRPF8",
+    "PTPN11",
+    "RAD21",
+    "RUNX1",
+    "SETBP1",
+    "SF3B1",
+    "SH2B3",
+    "SMC1A",
+    "SMC3",
+    "SRSF2",
+    "STAG2",
+    "STAT3",
+    "SUZ12",
+    "TET2",
+    "TP53",
+    "U2AF1",
+    "U2AF2",
+    "WT1",
+    "ZBTB33",
+    "ZRSR2"
+  ],
+  "BASE_DIR": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code",
+  "CENTER_GROUPING": {
+    "enabled": true,
+    "rare_center_threshold": 40,
+    "other_label": "CENTER_OTHER"
+  },
+  "CLINICAL_COMPOSITE_SCORES": {
+    "cytopenia_score": {
+      "components": [
+        "anemia_moderate",
+        "thrombocytopenia_moderate",
+        "neutropenia_moderate"
+      ],
+      "output_col": "cytopenia_score"
+    },
+    "pancytopenia": {
+      "score_col": "cytopenia_score",
+      "threshold": 3,
+      "output_col": "pancytopenia"
+    },
+    "proliferation_score": {
+      "components": [
+        "high_blast_count",
+        "leukocytosis_high"
+      ],
+      "output_col": "proliferation_score"
+    }
+  },
+  "CLINICAL_LOG_COLUMNS": [
+    "WBC",
+    "PLT",
+    "ANC",
+    "MONOCYTES"
+  ],
+  "CLINICAL_NUMERIC_COLUMNS": [
+    "BM_BLAST",
+    "WBC",
+    "ANC",
+    "MONOCYTES",
+    "HB",
+    "PLT"
+  ],
+  "CLINICAL_RANGES": {
+    "BM_BLAST": [
+      0,
+      100
+    ],
+    "WBC": [
+      0,
+      400
+    ],
+    "ANC": [
+      0,
+      100
+    ],
+    "MONOCYTES": [
+      0,
+      100
+    ],
+    "PLT": [
+      0,
+      3000
+    ],
+    "HB": [
+      2,
+      25
+    ]
+  },
+  "CLINICAL_RATIOS": {
+    "neutrophil_ratio": [
+      "ANC",
+      "WBC"
+    ],
+    "monocyte_ratio": [
+      "MONOCYTES",
+      "WBC"
+    ],
+    "platelet_wbc_ratio": [
+      "PLT",
+      "WBC"
+    ],
+    "blast_platelet_ratio": [
+      "BM_BLAST",
+      "PLT"
+    ]
+  },
+  "CLINICAL_THRESHOLDS": {
+    "anemia_moderate": [
+      "HB",
+      "<",
+      10
+    ],
+    "anemia_severe": [
+      "HB",
+      "<",
+      8
+    ],
+    "thrombocytopenia_moderate": [
+      "PLT",
+      "<",
+      100
+    ],
+    "thrombocytopenia_severe": [
+      "PLT",
+      "<",
+      50
+    ],
+    "neutropenia_moderate": [
+      "ANC",
+      "<",
+      1.5
+    ],
+    "neutropenia_severe": [
+      "ANC",
+      "<",
+      1.0
+    ],
+    "leukocytosis_high": [
+      "WBC",
+      ">",
+      30
+    ],
+    "high_blast_count": [
+      "BM_BLAST",
+      ">",
+      20
+    ]
+  },
+  "COMPLEX_ABNORMALITIES_CAP": 12,
+  "COMPLEX_KARYOTYPE_MIN_ABNORMALITIES": 3,
+  "COMPONENTWISE_GB_PARAMS": {
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "subsample": 0.7
+  },
+  "COMUTATION_PATTERNS": {
+    "NPM1_pos_FLT3_neg": {
+      "type": "co_occurrence",
+      "genes": [
+        "NPM1",
+        "FLT3"
+      ],
+      "status": [
+        1,
+        0
+      ]
+    },
+    "double_hit_spliceosome": {
+      "type": "multi_hit",
+      "pathway": "RNA_splicing",
+      "min_hits": 2
+    },
+    "triple_hit_epigenetic": {
+      "type": "multi_hit",
+      "pathway": "DNA_methylation",
+      "min_hits": 3
+    },
+    "vaf_ratio_FLT3_NPM1": {
+      "type": "vaf_ratio",
+      "numerator": "FLT3",
+      "denominator": "NPM1"
+    }
+  },
+  "COSMIC_TIER_FEATURES": {
+    "enabled": true,
+    "counts_by_tier": true,
+    "keep_min_tier_na": true,
+    "add_has_cosmic_tier": true
+  },
+  "COXNET_PARAMS": {
+    "l1_ratio": 0.95,
+    "n_alphas": 100,
+    "max_iter": 20000
+  },
+  "COX_PARAMS": {
+    "alpha": 0.1,
+    "n_iter": 100
+  },
+  "CREATE_LOG_COLUMNS": false,
+  "CYTOGENETIC_COMMON_MONOSOMIES": [
+    "-7\\b",
+    "-5\\b",
+    "-18\\b",
+    "-17\\b",
+    "-20\\b",
+    "-16\\b",
+    "-13\\b",
+    "-21\\b",
+    "-12\\b"
+  ],
+  "CYTOGENETIC_COMMON_TRISOMIES": [
+    "\\+8\\b",
+    "\\+1\\b",
+    "\\+11\\b",
+    "\\+21\\b",
+    "\\+13\\b",
+    "\\+19\\b",
+    "\\+9\\b",
+    "\\+20\\b"
+  ],
+  "CYTOGENETIC_EVENT_PATTERNS": {
+    "n_t": "t\\(",
+    "n_del": "del\\(|del,",
+    "n_inv": "inv\\(",
+    "n_add": "add\\(",
+    "n_der": "der\\(",
+    "n_ins": "ins\\(",
+    "n_i": "i\\(",
+    "n_dic": "dic\\(",
+    "n_ring": "r\\(",
+    "n_mar": "\\+mar",
+    "n_dmin": "dmin",
+    "n_plus": "\\+",
+    "n_minus": "-"
+  },
+  "CYTOGENETIC_PARSING_REGEX": {
+    "normal_string": "normal",
+    "complex_fallback": ">=3|>3|complex|multiple abnormalities",
+    "clone_split": "\\s*/\\s*|\\s{2,}",
+    "cell_count": "\\[\\s*(?:cp)?\\s*(\\d+)(?:/\\d+)?\\s*\\]$",
+    "idem": "idem",
+    "event_text_prefix": "^\\s*\\d{1,2}(?:-\\d{1,2})?\\s*,\\s*X[XY]*",
+    "chromosome_count": "^\\s*(\\d+)"
+  },
+  "CYTOGENETIC_PATTERNS": {
+    "t(9;22)": "t\\s*\\(\\s*9\\s*;\\s*22\\s*\\)",
+    "t(15;17)": "t\\s*\\(\\s*15\\s*;\\s*17\\s*\\)",
+    "inv(16)": "inv\\s*\\(\\s*16\\s*\\)|t\\s*\\(\\s*16\\s*;\\s*16\\s*\\)",
+    "t(8;21)": "t\\s*\\(\\s*8\\s*;\\s*21\\s*\\)",
+    "del5q_or_mono5": "del\\s*\\(\\s*5\\s*\\)\\s*\\(q|-\\s*5\\b",
+    "del7q_or_mono7": "del\\s*\\(\\s*7\\s*\\)\\s*\\(q|-\\s*7\\b",
+    "del17p": "del\\s*\\(\\s*17\\s*\\)\\s*\\(p",
+    "del20q": "del\\s*\\(\\s*20\\s*\\)\\s*\\(q",
+    "+8": "\\+\\s*8\\b",
+    "idic(X)(q13)": "idic\\s*\\(\\s*X\\s*\\)\\s*\\(q13\\)"
+  },
+  "CYTOGENETIC_SECONDARY_FLAGS": {
+    "has_monosomy_17": "-\\s*17\\b",
+    "has_trisomy_21": "\\+\\s*21\\b",
+    "has_trisomy_11": "\\+\\s*11\\b",
+    "has_trisomy_13": "\\+\\s*13\\b"
+  },
+  "CYTO_FEATURE_TOGGLES": {
+    "extended_features": true,
+    "include_common_events": true,
+    "main_clone_analysis": true
+  },
+  "CYTO_MOLECULAR_CROSS": {
+    "enabled": true,
+    "arms": [
+      "5q",
+      "7q",
+      "17p"
+    ],
+    "specs": [
+      {
+        "arm": "5q",
+        "cyto_col": "del_5q_or_mono5",
+        "out_col": "mut_in_5q_and_del5q"
+      },
+      {
+        "arm": "7q",
+        "cyto_col": "monosomy_7_or_del7q",
+        "out_col": "mut_in_7q_and_del7q"
+      },
+      {
+        "arm": "17p",
+        "cyto_col": "del_17p_or_i17q",
+        "out_col": "mut_in_17p_and_del17p"
+      }
+    ]
+  },
+  "DATA_DIR": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas",
+  "DATA_PATHS": {
+    "input_clinical_train": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\X_train\\clinical_train.csv",
+    "input_molecular_train": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\X_train\\molecular_train_filled.csv",
+    "input_target_train": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\target_train.csv",
+    "input_clinical_test": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\X_test\\clinical_test.csv",
+    "input_molecular_test": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\X_test\\molecular_test_filled.csv",
+    "output_dir": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datasets_processed",
+    "oncokb_file": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\external\\cancerGeneList.txt",
+    "cosmic_file": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\external\\Cosmic_CancerGeneCensus_v102_GRCh38.tsv",
+    "clinvar_vcf": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\external\\clinvar.vcf"
+  },
+  "DISCOVERED_TOP_MISSING_GENES": [
+    "ETNK1",
+    "BRCC3",
+    "CTCF",
+    "EP300",
+    "ZBTB33",
+    "GNB1",
+    "ASXL2",
+    "ARID2",
+    "PRPF8",
+    "GNAS",
+    "U2AF2",
+    "KMT2D",
+    "CREBBP",
+    "NFE2",
+    "CSF3R",
+    "RAD21",
+    "SMC1A",
+    "SMC3",
+    "KDM6A",
+    "SUZ12",
+    "EED",
+    "STAT3"
+  ],
+  "DRIVER_LIKE_FEATURES": {
+    "enabled": true
+  },
+  "ELN_CYTO_RISK_ENCODING": {
+    "encode_as": "one_hot",
+    "weights": {
+      "favorable": 0.0,
+      "intermediate": 0.7,
+      "adverse": 1.0
+    }
+  },
+  "ELN_MOLECULAR_RISK_ENCODING": {
+    "encode_as": "one_hot",
+    "weights": {
+      "favorable": 0.0,
+      "intermediate": 0.7,
+      "adverse": 1.0
+    }
+  },
+  "EXPERIMENT": {
+    "name": "baseline_supervised_mono",
+    "use_monocyte_supervised": true,
+    "keep_monocyte_indicator": false,
+    "use_center_ohe": false,
+    "model_family": "rsf",
+    "random_seed": 42,
+    "prune_feature": true,
+    "prune_feature_threshold": 0.95
+  },
+  "EXTRA_TREES_PARAMS": {
+    "n_estimators": 400,
+    "max_depth": 15,
+    "min_samples_split": 20,
+    "min_samples_leaf": 10,
+    "max_features": "sqrt",
+    "n_jobs": -1
+  },
+  "FAVORABLE_GENES": [
+    "NPM1",
+    "CEBPA"
+  ],
+  "FEATURE_ENGINEERING_TOGGLES": {
+    "clinical": true,
+    "cytogenetic": true,
+    "molecular": true,
+    "cyto_molecular_interaction": true
+  },
+  "FEATURE_INTERACTIONS": {
+    "enabled": true,
+    "cyto_normal_mol_favorable": {
+      "enabled": true,
+      "base_col": "normal_karyotype",
+      "good_mol_cols": [
+        "mut_NPM1",
+        "CEBPA_biallelic"
+      ],
+      "bad_mol_cols_for_good": [
+        "FLT3_ITD"
+      ]
+    },
+    "cyto_normal_mol_adverse": {
+      "enabled": true,
+      "base_col": "normal_karyotype",
+      "adverse_mol_cols": [
+        "FLT3_ITD"
+      ]
+    },
+    "cyto_favorable_mol_adverse_kit": {
+      "enabled": true,
+      "base_col": "any_favorable_cyto",
+      "adverse_mol_cols": [
+        "mut_KIT"
+      ]
+    },
+    "cyto_complex_and_mol_tp53": {
+      "enabled": true,
+      "base_col": "complex_karyotype",
+      "adverse_mol_cols": [
+        "mut_TP53"
+      ]
+    }
+  },
+  "FIRST_TIER_DISCOVERED_GENES": [
+    "CBL",
+    "DDX41",
+    "CUX1",
+    "NF1",
+    "PHF6",
+    "SETBP1",
+    "JAK2",
+    "MLL",
+    "WT1",
+    "ETV6",
+    "PPM1D"
+  ],
+  "FLOAT32_POLICY": {
+    "enabled": true,
+    "columns": [
+      "BM_BLAST",
+      "WBC",
+      "ANC",
+      "MONOCYTES",
+      "HB",
+      "PLT"
+    ],
+    "auto_detect_feature_frames": true,
+    "auto_detect_processed_frames": true,
+    "protected_columns": [
+      "ID",
+      "CENTER",
+      "OS_STATUS",
+      "OS_YEARS",
+      "CENTER_GROUP"
+    ]
+  },
+  "GENE_PATHWAYS": {
+    "DNA_methylation": [
+      "DNMT3A",
+      "TET2",
+      "IDH1",
+      "IDH2"
+    ],
+    "RNA_splicing": [
+      "SF3B1",
+      "SRSF2",
+      "U2AF1",
+      "ZRSR2"
+    ],
+    "Chromatin_modification": [
+      "ASXL1",
+      "EZH2",
+      "BCOR",
+      "KDM6A",
+      "SUZ12",
+      "EED"
+    ],
+    "Transcription_factors": [
+      "NPM1",
+      "CEBPA",
+      "RUNX1"
+    ],
+    "Tumor_suppressor": [
+      "TP53"
+    ],
+    "Tyrosine_kinase": [
+      "FLT3",
+      "KIT"
+    ],
+    "RAS_signaling": [
+      "NRAS",
+      "KRAS",
+      "PTPN11"
+    ],
+    "Cohesin_complex": [
+      "STAG2",
+      "RAD21",
+      "SMC1A",
+      "SMC3"
+    ],
+    "JAK_STAT": [
+      "STAT3"
+    ]
+  },
+  "GRADIENT_BOOSTING_PARAMS": {
+    "n_estimators": 500,
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "subsample": 0.7,
+    "min_samples_leaf": 20,
+    "min_samples_split": 40,
+    "loss": "coxph"
+  },
+  "ID_COLUMNS": {
+    "patient": "ID",
+    "center": "CENTER"
+  },
+  "INTERMEDIATE_GENES": [
+    "FLT3",
+    "DNMT3A",
+    "TET2",
+    "IDH1",
+    "IDH2",
+    "KIT"
+  ],
+  "MISSINGNESS_POLICY": {
+    "create_indicators": true,
+    "keep_columns": [
+      "WBC",
+      "HB",
+      "PLT",
+      "ANC",
+      "MONOCYTES"
+    ],
+    "drop_non_kept_indicators": true
+  },
+  "MODELING": {
+    "seed": 42,
+    "tau": 7,
+    "cv_folds": 4,
+    "cv_repeats": 2,
+    "models": {
+      "RSF": {
+        "enabled": true,
+        "params": {
+          "n_estimators": 400,
+          "max_depth": 15,
+          "min_samples_split": 20,
+          "min_samples_leaf": 10,
+          "max_features": "sqrt",
+          "n_jobs": -1
+        }
+      },
+      "GradientBoosting": {
+        "enabled": true,
+        "params": {
+          "n_estimators": 500,
+          "learning_rate": 0.05,
+          "max_depth": 3,
+          "subsample": 0.7,
+          "min_samples_leaf": 20,
+          "min_samples_split": 40,
+          "loss": "coxph"
+        }
+      },
+      "Cox": {
+        "enabled": true,
+        "params": {
+          "alpha": 0.1,
+          "n_iter": 100
+        }
+      },
+      "CoxNet": {
+        "enabled": true,
+        "params": {
+          "l1_ratio": 0.95,
+          "n_alphas": 100,
+          "max_iter": 20000
+        }
+      },
+      "ExtraTrees": {
+        "enabled": true,
+        "params": {
+          "n_estimators": 400,
+          "max_depth": 15,
+          "min_samples_split": 20,
+          "min_samples_leaf": 10,
+          "max_features": "sqrt",
+          "n_jobs": -1
+        }
+      },
+      "ComponentwiseGB": {
+        "enabled": true,
+        "params": {
+          "n_estimators": 400,
+          "learning_rate": 0.05,
+          "subsample": 0.7
+        }
+      },
+      "DeepSurv": {
+        "enabled": false,
+        "params": {
+          "hidden_layers": [
+            128,
+            64,
+            32
+          ],
+          "dropout": 0.6,
+          "batch_norm": true,
+          "learning_rate": 0.001,
+          "batch_size": 128,
+          "epochs": 100,
+          "patience": 10,
+          "weight_decay": 0.005,
+          "optimizer": "Adam",
+          "lr_scheduler": true,
+          "lr_factor": 0.5,
+          "lr_patience": 50
+        }
+      }
+    },
+    "hyper_params_grids": {
+      "RSF": {
+        "n_estimators": [
+          200,
+          400,
+          600
+        ],
+        "max_depth": [
+          10,
+          15,
+          20
+        ],
+        "min_samples_leaf": [
+          10,
+          20,
+          30
+        ]
+      },
+      "GradientBoosting": {
+        "n_estimators": [
+          300,
+          500,
+          700
+        ],
+        "learning_rate": [
+          0.01,
+          0.05,
+          0.1
+        ],
+        "max_depth": [
+          3,
+          5,
+          7
+        ]
+      },
+      "CoxNet": {
+        "l1_ratio": [
+          0.5,
+          0.7,
+          0.9,
+          0.95,
+          1.0
+        ]
+      }
+    },
+    "ensemble": {
+      "max_models_in_ensemble": 3,
+      "optimization_metric": "c_index",
+      "score_time_point": 5
+    },
+    "prediction": {
+      "ensemble_meta_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\ensemble_meta.json",
+      "preprocessor_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\preprocessor.joblib"
+    }
+  },
+  "MODEL_DIR": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models",
+  "MOLECULAR_EXTERNAL_SCORES": {
+    "cadd": {
+      "enabled": true,
+      "snv_only": true,
+      "high_threshold": 20.0,
+      "features": [
+        "max",
+        "mean",
+        "high_count"
+      ],
+      "prefetch_on_prepare": false
+    },
+    "myvariant": {
+      "prefetch_on_prepare": false
+    },
+    "clinvar": {
+      "enabled": true,
+      "vcf_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\datas\\external\\clinvar.vcf",
+      "category_patterns": {
+        "pathogenic": [
+          "Pathogenic"
+        ],
+        "likely_pathogenic": [
+          "Likely_pathogenic"
+        ],
+        "benign": [
+          "Benign"
+        ],
+        "uncertain": [
+          "Uncertain"
+        ],
+        "conflicting": [
+          "Conflicting"
+        ]
+      }
+    }
+  },
+  "MOLECULAR_FEATURE_TOGGLES": {
+    "pathway_features": {
+      "binary": true,
+      "count": true
+    },
+    "burden": true
+  },
+  "MOLECULAR_GENE_FREQ_FILTER": {
+    "enabled": true,
+    "min_total_count": 5,
+    "reference": "reports",
+    "train_counts_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\reports\\data_explore\\train\\molecular_gene_counts.csv",
+    "test_counts_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\reports\\data_explore\\test\\molecular_gene_counts.csv"
+  },
+  "MOLECULAR_INPUT_COLUMNS": {
+    "gene": "GENE",
+    "vaf": "VAF",
+    "effect": "EFFECT",
+    "protein_change": "PROTEIN_CHANGE",
+    "impact": "IMPACT",
+    "hugo_symbol": "Hugo_Symbol"
+  },
+  "MOLECULAR_VAF_THRESHOLDS": {
+    "TP53": 0.55,
+    "FLT3": 0.25,
+    "NPM1": 0.5,
+    "CEBPA": 0.5,
+    "DNMT3A": 0.5,
+    "IDH1": 0.5,
+    "IDH2": 0.5
+  },
+  "MUTATION_TYPE_PATTERNS": {
+    "TP53_truncating": {
+      "gene": "TP53",
+      "type": "pattern_match",
+      "on_column": "effect",
+      "pattern": "nonsense|frameshift|splice_site|stop_gained"
+    },
+    "CEBPA_biallelic": {
+      "gene": "CEBPA",
+      "type": "count",
+      "threshold": 2
+    },
+    "FLT3_ITD": {
+      "gene": "FLT3",
+      "type": "pattern_match",
+      "on_column": "effect",
+      "pattern": "ITD|internal tandem duplication"
+    },
+    "FLT3_TKD": {
+      "gene": "FLT3",
+      "type": "pattern_match",
+      "on_column": "protein_change",
+      "pattern": "D835|I836"
+    }
+  },
+  "PREPROCESSING": {
+    "imputer": "iterative",
+    "knn": {
+      "n_neighbors": 4
+    },
+    "iterative": {
+      "max_iter": 100,
+      "estimator": "BayesianRidge",
+      "estimator_n_estimators": 250,
+      "random_state": 42
+    },
+    "early_imputation": {
+      "enabled": false,
+      "strategy": "iterative",
+      "columns": [
+        "BM_BLAST",
+        "WBC",
+        "ANC",
+        "MONOCYTES",
+        "HB",
+        "PLT"
+      ],
+      "respect_ranges": true,
+      "range_map": {
+        "BM_BLAST": [
+          0,
+          100
+        ],
+        "WBC": [
+          0,
+          400
+        ],
+        "ANC": [
+          0,
+          100
+        ],
+        "MONOCYTES": [
+          0,
+          100
+        ],
+        "PLT": [
+          0,
+          3000
+        ],
+        "HB": [
+          2,
+          25
+        ]
+      },
+      "artifact_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\early_continuous_imputer.joblib"
+    },
+    "monocyte_imputer": {
+      "model_path": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\models\\monocyte_imputer.joblib",
+      "predictors": {
+        "num": [
+          "WBC",
+          "ANC",
+          "HB",
+          "PLT",
+          "BM_BLAST"
+        ],
+        "cat": [
+          "CENTER"
+        ]
+      },
+      "preprocessing": {
+        "num_imputer": "median",
+        "num_scaler": "standard"
+      },
+      "regressor": {
+        "type": "HistGradientBoostingRegressor",
+        "learning_rate": 0.08,
+        "max_depth": null,
+        "max_iter": 400,
+        "l2_regularization": 0.0,
+        "random_state": 42
+      },
+      "clip_to_wbc": true,
+      "winsorize_pct": 99.5
+    },
+    "clip_quantiles": {
+      "lower": 0.01,
+      "upper": 0.99
+    },
+    "numeric_scaler": "robust",
+    "drop_zero_variance": true,
+    "auto_detect_continuous_features": false,
+    "continuous_threshold": 20,
+    "continuous_features": [
+      "BM_BLAST",
+      "WBC",
+      "ANC",
+      "MONOCYTES",
+      "HB",
+      "PLT",
+      "neutrophil_ratio",
+      "monocyte_ratio",
+      "platelet_wbc_ratio",
+      "blast_platelet_ratio",
+      "vaf_max_TP53",
+      "vaf_max_FLT3",
+      "vaf_max_NPM1",
+      "vaf_max_CEBPA",
+      "vaf_max_DNMT3A",
+      "vaf_mean",
+      "vaf_median",
+      "vaf_max",
+      "vaf_std",
+      "high_vaf_ratio",
+      "max_cadd_score",
+      "mean_cadd_score",
+      "max_gerp_score"
+    ]
+  },
+  "PRUNING_POLICY": {
+    "rare_feature_threshold": 0.02,
+    "correlation_threshold": 0.95,
+    "default_id_cols": [
+      "ID",
+      "CENTER_GROUP"
+    ],
+    "priority_rules": [
+      {
+        "keep": "mut_",
+        "drop": "_altered"
+      },
+      {
+        "keep": "mut_",
+        "drop": "_count"
+      },
+      {
+        "keep": "log_",
+        "drop": ""
+      },
+      {
+        "keep": "mean",
+        "drop": "median"
+      }
+    ],
+    "rare_binary_protected_features": [
+      "CEBPA_high_VAF",
+      "IDH2_high_VAF",
+      "FLT3_TKD",
+      "triple_hit_epigenetic",
+      "cyto_normal_mol_adverse"
+    ],
+    "rare_feature_aggregations": [
+      {
+        "output_col": "has_rare_cyto_event",
+        "features": [
+          "incomplete_karyotype",
+          "n_ins",
+          "near_triploidy",
+          "t_9_11"
+        ],
+        "mode": "any"
+      }
+    ]
+  },
+  "PYCOX_DEEPSURV_PARAMS": {
+    "hidden_layers": [
+      128,
+      64,
+      32
+    ],
+    "dropout": 0.6,
+    "batch_norm": true,
+    "learning_rate": 0.001,
+    "batch_size": 128,
+    "epochs": 100,
+    "patience": 10,
+    "weight_decay": 0.005,
+    "optimizer": "Adam",
+    "lr_scheduler": true,
+    "lr_factor": 0.5,
+    "lr_patience": 50
+  },
+  "RARE_EVENT_PRUNING_THRESHOLD": 0.02,
+  "RAS_PATHWAY_GENES": [
+    "NRAS",
+    "KRAS",
+    "PTPN11"
+  ],
+  "REDUNDANCY_POLICY": {
+    "drop_count_when_binary_exists": false,
+    "drop_count_when_any_exists": false,
+    "drop_sex_numeric_if_ohe": true,
+    "prune_missingness_indicators": true,
+    "explicit_drop": [
+      "CENTER"
+    ]
+  },
+  "RESULTS_DIR": "C:\\Users\\Bureau\\Challenge_data\\Challenge-data\\challenge_code\\results",
+  "RSF_PARAMS": {
+    "n_estimators": 400,
+    "max_depth": 15,
+    "min_samples_split": 20,
+    "min_samples_leaf": 10,
+    "max_features": "sqrt",
+    "n_jobs": -1
+  },
+  "SECOND_TIER_DISCOVERED_GENES": [
+    "GATA2",
+    "KMT2C",
+    "BCORL1",
+    "MPL",
+    "SH2B3",
+    "CSNK1A1"
+  ],
+  "SEED": 42,
+  "SPECIFIC_ABNORMALITIES_TO_FLAG": {
+    "trisomy_8": "\\+\\s*8(?![0-9])|\\btris(omy|omia)?\\s*8(?![0-9])",
+    "t_9_11": "t\\s*\\(\\s*9\\s*;\\s*11\\s*\\)",
+    "minus_Y": "\\bminus_y\\b|-\\s*y(?![a-zA-Z0-9])|\\bdely\\b",
+    "plus_21": "\\+\\s*21(?![0-9])|\\btris(omy|omia)?\\s*21(?![0-9])",
+    "del_5q_or_mono5": "-\\s*5(?![0-9])|\\b(mono|del)\\w*\\s*5|\\bdel\\s*\\(\\s*5\\s*\\)\\s*\\(q",
+    "monosomy_7_or_del7q": "-\\s*7(?![0-9])|\\b(mono|del)\\w*\\s*7|\\bdel\\s*\\(\\s*7\\s*\\)\\s*\\(q",
+    "del_17p_or_i17q": "del\\s*\\(\\s*17\\s*\\)\\s*\\(p|i\\s*\\(\\s*17\\s*\\)\\s*\\(q|17p-",
+    "rearr_3q26": "inv\\(3\\).*q26|t\\(3;.*\\).*q26|t\\(.*;3\\).*q26",
+    "del_12p": "del\\s*\\(\\s*12\\s*\\)\\s*\\(p"
+  },
+  "TARGET_COLUMNS": {
+    "status": "OS_STATUS",
+    "time": "OS_YEARS"
+  },
+  "TAU": 7
+}

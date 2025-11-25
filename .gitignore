@@ -2,7 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+*clinvar.vcf
 # C extensions
 *.so
 

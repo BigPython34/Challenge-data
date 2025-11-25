@@ -1,6 +1,11 @@
 import os
 from typing import List, Optional, Sequence, Tuple
-from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY, PRUNING_POLICY
+from ...config import (
+    MISSINGNESS_POLICY,
+    REDUNDANCY_POLICY,
+    PRUNING_POLICY,
+    DATA_PROFILE_STRATEGY,
+)
 import numpy as np
 import pandas as pd
 
@@ -77,7 +82,10 @@ def prune_highly_correlated_features(
         return df_to_prune
 
 
+    protected_features = set(PRUNING_POLICY.get("protected_features", []))
+
     to_drop = set(_apply_priority_rules(corr_upper, threshold))
+    to_drop.difference_update(protected_features)
     df_mid = work_df.drop(columns=list(to_drop), errors="ignore")
     print(f"   -> {len(to_drop)} features supprimées par règles de priorité.")
 
@@ -88,6 +96,8 @@ def prune_highly_correlated_features(
         strong_corrs_final = corr_upper2.index[corr_upper2[col] > threshold].tolist()
         if strong_corrs_final:
             to_drop_final.update(strong_corrs_final)
+
+    to_drop_final.difference_update(protected_features)
 
     df_final = df_mid.drop(columns=list(to_drop_final), errors="ignore")
     print(
@@ -139,7 +149,10 @@ def prune_highly_correlated_features_pair(
         )
         return train_df.copy(), test_df.copy()
 
+    protected_features = set(PRUNING_POLICY.get("protected_features", []))
+
     to_drop_priority = set(_apply_priority_rules(corr_upper, threshold))
+    to_drop_priority.difference_update(protected_features)
     train_mid = train_feat.drop(columns=list(to_drop_priority), errors="ignore")
     print(f"   -> {len(to_drop_priority)} features supprimées par règles de priorité.")
 
@@ -150,6 +163,8 @@ def prune_highly_correlated_features_pair(
         strong_corrs_final = corr_upper2.index[corr_upper2[col] > threshold].tolist()
         if strong_corrs_final:
             to_drop_general.update(strong_corrs_final)
+
+    to_drop_general.difference_update(protected_features)
 
     kept_cols = [c for c in train_mid.columns if c not in to_drop_general]
     print(
@@ -249,7 +264,8 @@ def _apply_redundancy_policy(df: pd.DataFrame) -> pd.DataFrame:
                     drop_cols.append(c)
 
     # Prune missingness indicators except whitelisted
-    if policy.get("prune_missingness_indicators", True):
+    require_missing = DATA_PROFILE_STRATEGY.get("require_missing_indicators", False)
+    if policy.get("prune_missingness_indicators", True) and not require_missing:
         keep = set(MISSINGNESS_POLICY.get("keep_columns", []))
         miss = [c for c in df.columns if c.endswith("_missing")]
         for c in miss:

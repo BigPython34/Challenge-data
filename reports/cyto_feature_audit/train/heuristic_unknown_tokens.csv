@@ -1,0 +1,11 @@
+ID,token,raw_cytogenetics
+P102759,deletion12p-,"46,xx,deletion12p-"
+P105602,13q-,"46,xy,inv(9)(p11;q13)[1]/47,idem,+8[19]einzelaberrationen:12p-,13q-"
+P105853,asxl-1undrunx-1mutation[13],"46,xx,asxl-1undrunx-1mutation[13]"
+P118211,2metaphaseswithfurthernon-clonalalterations,"46-54,xy,t(5;14)(q31;q32),del(8)(q24),der817)add(17)(p13),-17,-21,der(22)add(22)(p13)markersandringschromosomes[16]/47,xy,t(5;14)(q31;q32),del(8)(q24),del(17)(p11,p13),-17,-21,der(22)add(22)(p13),+der(22)add(22)(p13),+der(22)add(22)(p13),+m1[2]/2metaphaseswithfurthernon-clonalalterations"
+P118494,del11q,del11q
+P118496,del7,del7
+P118499,del7,del7
+P118505,del20,del20
+P118506,del20,del20
+P132717,xx[20]trisomy8onfish,"46,xx[20]trisomy8onfish"
