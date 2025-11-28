@@ -796,7 +796,8 @@ HYPERPARAM_OPTIMIZATION = {
         "RSF": {
             "enabled": True,
             "n_trials": 300,
-            "n_jobs": -1,
+            "optuna_workers": 1,
+            "model_n_jobs": -1,
             "search_space": {
                 "n_estimators": ("int", [200, 1000]),
                 "max_depth": ("int", [8, 35]),
@@ -808,7 +809,8 @@ HYPERPARAM_OPTIMIZATION = {
         "ExtraTrees": {
             "enabled": True,
             "n_trials": 300,
-            "n_jobs": -1,
+            "optuna_workers": 1,
+            "model_n_jobs": -1,
             "search_space": {
                 "n_estimators": ("int", [200, 800]),
                 "max_depth": ("int", [10, 40]),
@@ -820,7 +822,7 @@ HYPERPARAM_OPTIMIZATION = {
         "GradientBoosting": {
             "enabled": True,
             "n_trials": 400,
-            "n_jobs": -1,
+            "optuna_workers": 1,
             "search_space": {
                 "n_estimators": ("int", [200, 1200]),
                 "learning_rate": ("float", [0.01, 0.1, True]),

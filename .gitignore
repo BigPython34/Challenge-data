@@ -40,7 +40,7 @@ challenge_code/models/*.joblib
 *.zarr
 *.npy
 *.npz
-
+*clinvar.vcf
 
 
 # Sauf les petits fichiers de config
