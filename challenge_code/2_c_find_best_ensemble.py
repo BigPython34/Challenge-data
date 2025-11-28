@@ -103,6 +103,15 @@ def main():
                 print(f"  [WARN] {name} failed on fold: {e}")
                 fold_scores[name].append(np.nan)
 
+    if oof_predictions.isnull().values.any():
+        nan_cols = [
+            col for col in oof_predictions.columns if oof_predictions[col].isnull().any()
+        ]
+        print(
+            f"\n[WARN] Removing models with incomplete OOF predictions (NaNs detected): {nan_cols}"
+        )
+        oof_predictions.drop(columns=nan_cols, inplace=True, errors="ignore")
+
     # Remove models that failed entirely
     oof_predictions.dropna(axis=1, how="all", inplace=True)
     valid_models = list(oof_predictions.columns)
@@ -115,10 +124,10 @@ def main():
     for name in valid_models:
         preds = oof_predictions[name].astype(float).values
         score = concordance_index_ipcw(y, y, preds, tau=TAU)[0]
-    base_scores[name] = score
-    summary_rows.append({"name": name, "size": 1, "score": score})
-    print(f"  Base OOF IPCW: {name:<20} = {score:.5f}")
-    training_report["base_scores"][name] = float(score)
+        base_scores[name] = score
+        summary_rows.append({"name": name, "size": 1, "score": score})
+        print(f"  Base OOF IPCW: {name:<20} = {score:.5f}")
+        training_report["base_scores"][name] = float(score)
 
     ensemble_results = []
     for k in range(2, len(valid_models) + 1):

@@ -282,10 +282,10 @@ REDUNDANCY_POLICY = {
     "drop_count_when_binary_exists": False,
     "drop_count_when_any_exists": False,
     "drop_sex_numeric_if_ohe": True,
-    "prune_missingness_indicators": True,
-    "explicit_drop": ["CENTER"]
+    "prune_missingness_indicators": False,
+    "explicit_drop": []
 }
-RARE_EVENT_PRUNING_TRESHOLD = 0.005
+RARE_EVENT_PRUNING_THRESHOLD = 0.000
 COMPLEX_ABNORMALITIES_CAP = 12
 
 
@@ -333,6 +333,12 @@ PREPROCESSING = {
     "clip_quantiles": {"lower": 0.01, "upper": 0.99},
     "numeric_scaler": "robust",
     "drop_zero_variance": True,
+    "zero_variance_protected_columns": [
+        "MONOCYTES_missing",
+    ],
+    "zero_variance_protected_prefixes": [
+        "CENTER_",
+    ],
     "auto_detect_continuous_features": False,
     "continuous_threshold": 20,
     "continuous_features": CLINICAL_NUMERIC_COLUMNS
@@ -374,22 +380,22 @@ FLOAT32_POLICY = {
 EXPERIMENT = {
     "name": "baseline_supervised_mono",
     "use_monocyte_supervised": True,
-    "keep_monocyte_indicator": False,
-    "use_center_ohe": False,
+    "keep_monocyte_indicator": True,
+    "use_center_ohe": True,
     "model_family": "rsf",
     "random_seed": SEED,
     "prune_feature": True,
-    "prune_feature_threshold": 0.95,
+    "prune_feature_threshold": 0.96,
 }
 
 # Model parameters
 TAU = 7  
 
 RSF_PARAMS = {
-    "n_estimators": 400,
+    "n_estimators": 600,
     "max_depth": 15,
-    "min_samples_split": 20,
-    "min_samples_leaf": 10,
+    "min_samples_split": 30,
+    "min_samples_leaf": 15,
     "max_features": "sqrt",
     "n_jobs": -1,
 }
@@ -534,8 +540,8 @@ FEATURE_INTERACTIONS = {
 }
 
 PRUNING_POLICY = {
-    "rare_feature_threshold": RARE_EVENT_PRUNING_TRESHOLD,
-    "correlation_threshold": 0.95,
+    "rare_feature_threshold": RARE_EVENT_PRUNING_THRESHOLD,
+    "correlation_threshold": EXPERIMENT["prune_feature_threshold"],
     "default_id_cols": ["ID", "CENTER_GROUP"],
     "priority_rules": [
         {"keep": "mut_", "drop": "_altered"},
@@ -549,6 +555,10 @@ PRUNING_POLICY = {
         "FLT3_TKD",
         "triple_hit_epigenetic",
         "cyto_normal_mol_adverse",
+        "MONOCYTES_missing",
+    ],
+    "rare_binary_protected_prefixes": [
+        "CENTER_",
     ],
     "rare_feature_aggregations": [
         {
@@ -778,5 +788,47 @@ MODELING = {
     "prediction": {
         "ensemble_meta_path": os.path.join(MODEL_DIR, "ensemble_meta.json"),
         "preprocessor_path": os.path.join(MODEL_DIR, "preprocessor.joblib"),
+    }
+}
+
+HYPERPARAM_OPTIMIZATION = {
+    "models": {
+        "RSF": {
+            "enabled": True,
+            "n_trials": 300,
+            "n_jobs": -1,
+            "search_space": {
+                "n_estimators": ("int", [200, 1000]),
+                "max_depth": ("int", [8, 35]),
+                "min_samples_split": ("int", [5, 50]),
+                "min_samples_leaf": ("int", [3, 30]),
+                "max_features": ("categorical", ["sqrt", 0.2, 0.3, 0.5]),
+            },
+        },
+        "ExtraTrees": {
+            "enabled": True,
+            "n_trials": 300,
+            "n_jobs": -1,
+            "search_space": {
+                "n_estimators": ("int", [200, 800]),
+                "max_depth": ("int", [10, 40]),
+                "min_samples_split": ("int", [5, 50]),
+                "min_samples_leaf": ("int", [3, 30]),
+                "max_features": ("categorical", ["sqrt", 0.2, 0.3, 0.5]),
+            },
+        },
+        "GradientBoosting": {
+            "enabled": True,
+            "n_trials": 400,
+            "n_jobs": -1,
+            "search_space": {
+                "n_estimators": ("int", [200, 1200]),
+                "learning_rate": ("float", [0.01, 0.1, True]),
+                "max_depth": ("int", [2, 6]),
+                "subsample": ("float", [0.6, 0.9]),
+                "min_samples_leaf": ("int", [15, 60]),
+                "max_features": ("float", [0.6, 1.0]),
+            },
+        },
     }
 }

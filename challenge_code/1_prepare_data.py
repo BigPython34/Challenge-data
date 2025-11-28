@@ -9,7 +9,7 @@ from src.config import (
     EXPERIMENT,
     CLINICAL_RANGES,
     MOLECULAR_EXTERNAL_SCORES,
-    RARE_EVENT_PRUNING_TRESHOLD,
+    RARE_EVENT_PRUNING_THRESHOLD,
     DATA_PATHS,
     ID_COLUMNS,
     TARGET_COLUMNS,
@@ -373,6 +373,23 @@ def main():
     else:
         print("\n[PREP] Regroupement des centres rares désactivé.")
 
+    keep_monocyte_indicator = EXPERIMENT.get("keep_monocyte_indicator", False)
+    monocyte_indicator_train = None
+    monocyte_indicator_test = None
+    if keep_monocyte_indicator and "MONOCYTES" in train_df.columns:
+        print("\n[PREP] Création de l'indicateur MONOCYTES_missing avant imputation…")
+
+        def _apply_indicator(df: pd.DataFrame, label: str) -> pd.Series | None:
+            if "MONOCYTES" not in df.columns:
+                print(f"   -> Indicateur ignoré: colonne MONOCYTES absente ({label}).")
+                return None
+            mask = df["MONOCYTES"].isna().astype("int8")
+            df["MONOCYTES_missing"] = mask
+            return mask.copy()
+
+        monocyte_indicator_train = _apply_indicator(train_df, "train")
+        monocyte_indicator_test = _apply_indicator(test_df, "test")
+
     try:
         if (
             EXPERIMENT.get("use_monocyte_supervised", False)
@@ -392,6 +409,12 @@ def main():
         Exception
     ) as e:  # noqa: BLE001 (intentional broad catch to keep pipeline running)
         print(f"[MONO] Imputation supervisée ignorée (erreur): {e}")
+
+    if keep_monocyte_indicator:
+        if monocyte_indicator_train is not None and "MONOCYTES_missing" in train_df.columns:
+            train_df["MONOCYTES_missing"] = monocyte_indicator_train.astype("int8")
+        if monocyte_indicator_test is not None and "MONOCYTES_missing" in test_df.columns:
+            test_df["MONOCYTES_missing"] = monocyte_indicator_test.astype("int8")
 
     train_df, test_df = apply_early_continuous_imputation(train_df, test_df)
     train_df = apply_float32_policy(
@@ -528,9 +551,19 @@ def main():
 
 
     if PREPROCESSING.get("drop_zero_variance", True):
+        protected_columns = set(
+            PREPROCESSING.get("zero_variance_protected_columns", []) or []
+        )
+        protected_prefixes = tuple(
+            PREPROCESSING.get("zero_variance_protected_prefixes", []) or []
+        )
         drop_cols = []
         for col in X_train_processed_df.columns:
             if col in [ID_COLUMNS["patient"], "CENTER_GROUP"]:
+                continue
+            if col in protected_columns:
+                continue
+            if protected_prefixes and col.startswith(protected_prefixes):
                 continue
             nunique_train = X_train_processed_df[col].nunique(dropna=False)
             nunique_test = X_test_processed_df[col].nunique(dropna=False)
@@ -569,7 +602,7 @@ def main():
     X_train_processed_df, X_test_processed_df = prune_rare_binary_features(
         X_train_processed_df,
         X_test_processed_df,
-        RARE_EVENT_PRUNING_TRESHOLD,
+        RARE_EVENT_PRUNING_THRESHOLD,
         ["ID", "CENTER_GROUP"],
     )
 

@@ -31,7 +31,15 @@ class ClinicalFeatureEngineering:
         if MISSINGNESS_POLICY.get("create_indicators", True):
             for col in CLINICAL_NUMERIC_COLUMNS:
                 if col in clinical_df.columns:
-                    clinical_df[f"{col}_missing"] = clinical_df[col].isna().astype(int)
+                    indicator_col = f"{col}_missing"
+                    if indicator_col in clinical_df.columns:
+                        continue
+                    clinical_df[indicator_col] = clinical_df[col].isna().astype(int)
+        numeric_cols_present = [col for col in CLINICAL_NUMERIC_COLUMNS if col in clinical_df.columns]
+        if numeric_cols_present:
+            clinical_df["clinical_all_missing"] = (
+                clinical_df[numeric_cols_present].isna().all(axis=1).astype(int)
+            )
         clinical_df = ClinicalFeatureEngineering._create_clinical_ratios(clinical_df)
         clinical_df = ClinicalFeatureEngineering._create_clinical_thresholds(
             clinical_df

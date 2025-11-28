@@ -283,6 +283,7 @@ def prune_rare_binary_features(
 
     policy = PRUNING_POLICY or {}
     protected_cols = set(policy.get("rare_binary_protected_features", []))
+    protected_prefixes = tuple(policy.get("rare_binary_protected_prefixes", []) or [])
     aggregations = policy.get("rare_feature_aggregations", [])
 
     def _apply_rare_aggregations(df: pd.DataFrame) -> list[str]:
@@ -329,6 +330,8 @@ def prune_rare_binary_features(
 
     for col in train_df_pruned.columns:
         if col in ignore_cols or col in protected_cols:
+            continue
+        if protected_prefixes and col.startswith(protected_prefixes):
             continue
 
 

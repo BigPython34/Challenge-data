@@ -5,11 +5,23 @@ Uses a robust and reusable orchestrator to find the best hyperparameters
 for the most promising survival models.
 """
 import pandas as pd
-from sksurv.ensemble import GradientBoostingSurvivalAnalysis, RandomSurvivalForest
+from sksurv.ensemble import (
+    GradientBoostingSurvivalAnalysis,
+    RandomSurvivalForest,
+    ExtraSurvivalTrees,
+)
 
 # Import your project's functions and classes
+from src.config import HYPERPARAM_OPTIMIZATION
 from src.modeling.train import load_training_dataset_csv
 from src.modeling.optimizer import OptimizationOrchestrator
+
+
+MODEL_CLASS_REGISTRY = {
+    "RSF": RandomSurvivalForest,
+    "GradientBoosting": GradientBoostingSurvivalAnalysis,
+    "ExtraTrees": ExtraSurvivalTrees,
+}
 
 
 def main():
@@ -30,54 +42,54 @@ def main():
         return
     if "CENTER_GROUP" in X.columns:
         X = X.drop(columns=["CENTER_GROUP"])
-    # --- 2. DEFINE SEARCH SPACES ---
-    # Define here which parameters to test for each model
 
-    rsf_search_space = {
-        "n_estimators": ("int", [100, 1000]),
-        "max_depth": ("int", [3, 40]),
-        "min_samples_split": ("int", [3, 50]),
-        "min_samples_leaf": ("int", [2, 50]),
-        "max_features": ("categorical", ["sqrt", 0.3, 0.5, 0.7]),
-    }
+    optimization_cfg = HYPERPARAM_OPTIMIZATION.get("models", {})
+    enabled_models = [
+        (name, cfg)
+        for name, cfg in optimization_cfg.items()
+        if cfg.get("enabled", False)
+    ]
 
-    gb_search_space = {
-        "n_estimators": ("int", [100, 1300]),
-        "learning_rate": ("float", [0.005, 0.01, 0.2, True]),  # True for log scale
-        "max_depth": ("int", [2, 13]),
-        "subsample": ("float", [0.2, 0.7, 1.0]),
-        "min_samples_leaf": ("int", [5, 50]),
-    }
+    if not enabled_models:
+        print("\n[INFO] Aucun modèle configuré pour l'optimisation. Rien à faire.")
+        return
 
-    # --- 3. RUN OPTIMIZATIONS ---
-    # You can choose which model(s) to optimize.
+    total_steps = 1 + len(enabled_models)
+    best_params = {}
 
-    print("\n[STEP 2/3] Optimizing Random Survival Forest...")
-    rsf_optimizer = OptimizationOrchestrator(
-        model_name="RSF",
-        model_class=RandomSurvivalForest,
-        search_space=rsf_search_space,
-        X=X,
-        y=y,
-        n_jobs=-1,  # Use all available CPU cores
-    )
-    best_rsf_params = rsf_optimizer.run(n_trials=300)  # Run for 300 trials
+    for idx, (model_name, model_cfg) in enumerate(enabled_models, start=2):
+        print(f"\n[STEP {idx}/{total_steps}] Optimizing {model_name}...")
+        model_class = MODEL_CLASS_REGISTRY.get(model_name)
+        if model_class is None:
+            print(
+                f"   [WARN] Aucun modèle sksurv enregistré pour '{model_name}'. Étape ignorée."
+            )
+            continue
+        search_space = model_cfg.get("search_space")
+        if not search_space:
+            print(
+                f"   [WARN] Aucun espace de recherche défini pour '{model_name}'. Étape ignorée."
+            )
+            continue
 
-    print("\n[STEP 3/3] Optimizing Gradient Boosting Survival...")
-    gb_optimizer = OptimizationOrchestrator(
-        model_name="GradientBoosting",
-        model_class=GradientBoostingSurvivalAnalysis,
-        search_space=gb_search_space,
-        X=X,
-        y=y,
-        n_jobs=-1,
-    )
-    best_gb_params = gb_optimizer.run(n_trials=400)  # Maybe more trials for this one
+        optimizer = OptimizationOrchestrator(
+            model_name=model_name,
+            model_class=model_class,
+            search_space=search_space,
+            X=X,
+            y=y,
+            n_jobs=model_cfg.get("n_jobs", -1),
+        )
+        trials = model_cfg.get("n_trials", 100)
+        best_params[model_name] = optimizer.run(n_trials=trials)
 
     print("\n" + "=" * 80)
     print("OPTIMIZATION SCRIPT FINISHED!")
-    print("\nBest parameters found for RSF:", best_rsf_params)
-    print("Best parameters found for Gradient Boosting:", best_gb_params)
+    if not best_params:
+        print("Aucun paramètre n'a été trouvé (toutes les étapes ont été ignorées).")
+    else:
+        for model_name, params in best_params.items():
+            print(f"\nBest parameters found for {model_name}:", params)
     print("\nYou can now use these parameters to train your final model.")
     print("=" * 80)
 
