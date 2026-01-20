@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Set
 from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY, PRUNING_POLICY
 import numpy as np
 import pandas as pd
@@ -17,15 +17,25 @@ def _compute_upper_corr(df: pd.DataFrame) -> pd.DataFrame:
     return corr_matrix_upper
 
 
-def _apply_priority_rules(corr_upper: pd.DataFrame, threshold: float) -> List[str]:
+def _apply_priority_rules(
+    corr_upper: pd.DataFrame,
+    threshold: float,
+    *,
+    protected: Optional[Set[str]] = None,
+) -> List[str]:
     to_drop: set[str] = set()
     rules = PRUNING_POLICY.get("priority_rules", [])
+    protected = protected or set()
 
     for col in corr_upper.columns:
+        if col in protected:
+            continue
         if col not in corr_upper.columns:
             continue
         strong_corrs = corr_upper.index[corr_upper[col] > threshold].tolist()
         for correlated_col in strong_corrs:
+            if correlated_col in protected:
+                continue
             if correlated_col not in corr_upper.index:
                 continue
             
@@ -64,9 +74,16 @@ def prune_highly_correlated_features(
 
     print(f"\n[PRUNING] Élagage des features (seuil > {threshold}) sur un DataFrame...")
     df_to_prune = df.copy()
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("correlation_protected_features", []) or [])
+    ignored_prefixes = tuple(policy.get("correlation_ignored_prefixes", []) or [])
 
 
-    feature_cols = [c for c in df_to_prune.columns if c not in id_cols]
+    feature_cols = [
+        c
+        for c in df_to_prune.columns
+        if c not in id_cols and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+    ]
     work_df = df_to_prune[feature_cols]
 
     corr_upper = _compute_upper_corr(work_df)
@@ -77,7 +94,9 @@ def prune_highly_correlated_features(
         return df_to_prune
 
 
-    to_drop = set(_apply_priority_rules(corr_upper, threshold))
+    to_drop = set(
+        _apply_priority_rules(corr_upper, threshold, protected=protected_cols)
+    )
     df_mid = work_df.drop(columns=list(to_drop), errors="ignore")
     print(f"   -> {len(to_drop)} features supprimées par règles de priorité.")
 
@@ -85,7 +104,13 @@ def prune_highly_correlated_features(
     corr_upper2 = _compute_upper_corr(df_mid)
     to_drop_final: set[str] = set()
     for col in corr_upper2.columns:
-        strong_corrs_final = corr_upper2.index[corr_upper2[col] > threshold].tolist()
+        if col in protected_cols:
+            continue
+        strong_corrs_final = [
+            other
+            for other in corr_upper2.index
+            if corr_upper2[col].get(other, np.nan) > threshold and other not in protected_cols
+        ]
         if strong_corrs_final:
             to_drop_final.update(strong_corrs_final)
 
@@ -127,7 +152,15 @@ def prune_highly_correlated_features_pair(
     )
 
     # Exclure les colonnes d'identifiants
-    feature_cols = [c for c in train_df.columns if c not in id_cols_list]
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("correlation_protected_features", []) or [])
+    ignored_prefixes = tuple(policy.get("correlation_ignored_prefixes", []) or [])
+
+    feature_cols = [
+        c
+        for c in train_df.columns
+        if c not in id_cols_list and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+    ]
     train_feat = train_df[feature_cols]
     test_feat = test_df.reindex(columns=feature_cols)
 
@@ -139,7 +172,9 @@ def prune_highly_correlated_features_pair(
         )
         return train_df.copy(), test_df.copy()
 
-    to_drop_priority = set(_apply_priority_rules(corr_upper, threshold))
+    to_drop_priority = set(
+        _apply_priority_rules(corr_upper, threshold, protected=protected_cols)
+    )
     train_mid = train_feat.drop(columns=list(to_drop_priority), errors="ignore")
     print(f"   -> {len(to_drop_priority)} features supprimées par règles de priorité.")
 
@@ -147,7 +182,13 @@ def prune_highly_correlated_features_pair(
     corr_upper2 = _compute_upper_corr(train_mid)
     to_drop_general: set[str] = set()
     for col in corr_upper2.columns:
-        strong_corrs_final = corr_upper2.index[corr_upper2[col] > threshold].tolist()
+        if col in protected_cols:
+            continue
+        strong_corrs_final = [
+            other
+            for other in corr_upper2.index
+            if corr_upper2[col].get(other, np.nan) > threshold and other not in protected_cols
+        ]
         if strong_corrs_final:
             to_drop_general.update(strong_corrs_final)
 

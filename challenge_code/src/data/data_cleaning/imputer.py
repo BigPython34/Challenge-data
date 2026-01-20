@@ -38,7 +38,7 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
         if self.strategy == "knn":
             knn_config = PREPROCESSING.get("knn", {})
             n_neighbors = self.n_neighbors if self.n_neighbors is not None else knn_config.get("n_neighbors", 4)
-            self.imputer_ = KNNImputer(n_neighbors=n_neighbors)
+            self.imputer_ = KNNImputer(n_neighbors=n_neighbors, keep_empty_features=True)
         elif self.strategy == "iterative":
             iterative_config = PREPROCESSING.get("iterative", {})
             estimator_name = iterative_config.get("estimator", "RandomForest")
@@ -76,7 +76,8 @@ class AdvancedImputer(BaseEstimator, TransformerMixin):
                 max_iter=iterative_config.get("max_iter", 350),
                 random_state=SEED,
                 initial_strategy=iterative_config.get("initial_strategy", "median"),
-                verbose=iterative_config.get("verbose", 2)
+                verbose=iterative_config.get("verbose", 2),
+                keep_empty_features=True
             )
 
         self.imputer_.fit(X)
@@ -128,6 +129,8 @@ def supervised_monocyte_imputation(
     regressor: dict | None = None,
     clip_to_wbc: bool | None = None,
     winsorize_pct: float | None = None,
+    extra_fit_df: pd.DataFrame | None = None,
+    include_test_rows: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if "MONOCYTES" not in train_df.columns:
         print("[MONO] Colonne MONOCYTES absente. Aucune imputation supervisée.")
@@ -151,15 +154,29 @@ def supervised_monocyte_imputation(
         print("[MONO] Aucune feature disponible pour imputer MONOCYTES. Abandon.")
         return train_df, test_df
 
-    mask_obs = train_df["MONOCYTES"].notna()
+    feature_cols_for_pool = list(dict.fromkeys(num_features + cat_features + ["MONOCYTES"]))
+    fit_pool = train_df.reindex(columns=feature_cols_for_pool).copy()
+    extra_rows = 0
+    if include_test_rows:
+        test_subset = test_df.reindex(columns=feature_cols_for_pool)
+        fit_pool = pd.concat([fit_pool, test_subset], ignore_index=True)
+        print(f"[MONO] +{len(test_subset)} lignes de test ajoutées pour entraîner l'imputeur.")
+    if extra_fit_df is not None:
+        extra_subset = extra_fit_df.reindex(columns=feature_cols_for_pool)
+        extra_rows = len(extra_subset)
+        if extra_rows:
+            fit_pool = pd.concat([fit_pool, extra_subset], ignore_index=True)
+            print(f"[MONO] +{extra_rows} lignes externes ajoutées pour entraîner l'imputeur.")
+
+    mask_obs = fit_pool["MONOCYTES"].notna()
     if mask_obs.sum() < 50:
         print(
             f"[MONO] Trop peu de valeurs observées ({mask_obs.sum()}) pour imputer. Abandon."
         )
         return train_df, test_df
 
-    X_train = train_df.loc[mask_obs, num_features + cat_features].copy()
-    y_train = np.log1p(train_df.loc[mask_obs, "MONOCYTES"].astype(float).values)
+    X_train = fit_pool.loc[mask_obs, num_features + cat_features].copy()
+    y_train = np.log1p(fit_pool.loc[mask_obs, "MONOCYTES"].astype(float).values)
 
     # Ensure dense output for downstream regressor
     ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)

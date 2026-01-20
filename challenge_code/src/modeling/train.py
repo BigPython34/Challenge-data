@@ -13,6 +13,7 @@ from sksurv.ensemble import (
     ComponentwiseGradientBoostingSurvivalAnalysis,
 )
 from sksurv.linear_model import CoxPHSurvivalAnalysis, CoxnetSurvivalAnalysis
+from sksurv.meta import Stacking
 from sksurv.metrics import concordance_index_ipcw
 from sksurv.util import Surv
 import warnings
@@ -61,6 +62,109 @@ class PyCoxWrapper:
         return self.model.predict_surv_df(X_scaled)
 
 
+class DeepSurvEstimator:
+    """Sklearn-like estimator that wraps the PyCox DeepSurv training routine."""
+
+    def __init__(self, **params):
+        if not PYCOX_AVAILABLE:
+            raise ImportError(
+                "PyCox is not installed. Install it with: pip install pycox torchtuples"
+            )
+        self.params = params.copy()
+        self.model_ = None
+
+    def fit(self, X, y):
+        self.model_ = train_pycox_deepsurv_model(X, y, **self.params)
+        return self
+
+    def predict(self, X):
+        if self.model_ is None:
+            raise RuntimeError("DeepSurvEstimator must be fitted before predicting.")
+        return self.model_.predict(X)
+
+    def predict_surv_df(self, X):
+        if self.model_ is None:
+            raise RuntimeError("DeepSurvEstimator must be fitted before predicting.")
+        return self.model_.predict_surv_df(X)
+
+    def get_params(self, deep=False):
+        return self.params.copy()
+
+
+MODEL_CLASS_MAP = {
+    "Cox": CoxPHSurvivalAnalysis,
+    "RSF": RandomSurvivalForest,
+    "GradientBoosting": GradientBoostingSurvivalAnalysis,
+    "CoxNet": CoxnetSurvivalAnalysis,
+    "ExtraTrees": ExtraSurvivalTrees,
+    "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis,
+}
+
+if PYCOX_AVAILABLE:
+    MODEL_CLASS_MAP["DeepSurv"] = DeepSurvEstimator
+
+
+RANDOM_STATE_MODELS = {"RSF", "GradientBoosting", "ExtraTrees", "ComponentwiseGB"}
+
+
+def _build_model_from_config(name):
+    """Instantiate a survival model described in MODELING config."""
+
+    model_cfg = MODELING["models"].get(name)
+    if model_cfg is None:
+        raise ValueError(f"Model '{name}' is not defined in MODELING['models'].")
+
+    if name == "DeepSurv" and not PYCOX_AVAILABLE:
+        raise ValueError(
+            "DeepSurv requested but PyCox/Torchtuples dependencies are missing."
+        )
+
+    params = model_cfg.get("params", {}).copy()
+    if name in RANDOM_STATE_MODELS:
+        params.setdefault("random_state", SEED)
+
+    model_cls = MODEL_CLASS_MAP.get(name)
+    if model_cls is None:
+        raise ValueError(f"No registered class for model '{name}'.")
+
+    return model_cls(**params)
+
+
+def _build_stacking_model():
+    """Construct a sksurv.meta.Stacking estimator from config settings."""
+
+    stacking_cfg = MODELING.get("stacking", {})
+    if not stacking_cfg.get("enabled"):
+        return None, None
+
+    base_names = stacking_cfg.get("base_models", [])
+    meta_name = stacking_cfg.get("meta_model")
+    if not base_names or not meta_name:
+        raise ValueError("Stacking requires both 'base_models' and 'meta_model'.")
+
+    base_estimators = []
+    for base_name in base_names:
+        try:
+            base_estimators.append((base_name, _build_model_from_config(base_name)))
+        except ValueError as err:
+            print(f"[WARN] Stacking base model skipped: {err}")
+
+    if not base_estimators:
+        raise ValueError("No valid base models remain for stacking after validation.")
+
+    meta_estimator = _build_model_from_config(meta_name)
+    probabilities = stacking_cfg.get("probabilities", True)
+    stacking_name = stacking_cfg.get("name", "Stacking")
+
+    stacking_model = Stacking(
+        meta_estimator=meta_estimator,
+        base_estimators=base_estimators,
+        probabilities=probabilities,
+    )
+
+    return stacking_name, stacking_model
+
+
 def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **params):
     """Train a PyCox DeepSurv model (simplified version)"""
 
@@ -86,8 +190,8 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     lr_patience = config.get("lr_patience", 25)
 
     # Preprocessing
-    durations = np.array([y[1] for y in y_train], dtype=np.float32)
-    events = np.array([y[0] for y in y_train], dtype=np.float32)
+    durations_full = np.array([y[1] for y in y_train], dtype=np.float32)
+    events_full = np.array([y[0] for y in y_train], dtype=np.float32)
 
     scaler = StandardScaler()
     X_train_np = X_train.values if hasattr(X_train, "values") else X_train
@@ -96,16 +200,23 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     if X_val is None or y_val is None:
         split = int(0.8 * len(X_train_scaled))
         X_val_scaled = X_train_scaled[split:]
-        val_durations = durations[split:]
-        val_events = events[split:]
+        val_durations = durations_full[split:]
+        val_events = events_full[split:]
+        y_val_struct = y_train[split:]
+
         X_train_scaled = X_train_scaled[:split]
-        durations = durations[:split]
-        events = events[:split]
+        durations = durations_full[:split]
+        events = events_full[:split]
+        y_train_struct = y_train[:split]
     else:
         X_val_np = X_val.values if hasattr(X_val, "values") else X_val
         X_val_scaled = scaler.transform(X_val_np).astype(np.float32)
         val_durations = np.array([y[1] for y in y_val], dtype=np.float32)
         val_events = np.array([y[0] for y in y_val], dtype=np.float32)
+        y_val_struct = y_val
+        durations = durations_full
+        events = events_full
+        y_train_struct = y_train
 
     # Label transformation
     labtrans = LabTransCoxTime()
@@ -155,8 +266,8 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         val_pred = model.predict(X_val_scaled).flatten()
 
         try:
-            cindex_train = concordance_index_ipcw(y_train, y_train, train_pred)[0]
-            cindex_val = concordance_index_ipcw(y_train, y_val, val_pred)[0]
+            cindex_train = concordance_index_ipcw(y_train_struct, y_train_struct, train_pred)[0]
+            cindex_val = concordance_index_ipcw(y_train_struct, y_val_struct, val_pred)[0]
         except:
             cindex_train = np.nan
             cindex_val = np.nan
@@ -287,30 +398,25 @@ def load_training_dataset_csv(X_train_path, y_train_path):
 
 
 def get_survival_models():
-    """
-    Returns a dictionary of non-trained survival models based on the configuration
-    in `config.py`.
-    """
-    model_classes = {
-        "Cox": CoxPHSurvivalAnalysis,
-        "RSF": RandomSurvivalForest,
-        "GradientBoosting": GradientBoostingSurvivalAnalysis,
-        "CoxNet": CoxnetSurvivalAnalysis,
-        "ExtraTrees": ExtraSurvivalTrees,
-        "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis,
-    }
+    """Return survival estimators configured in `config.py`, including stacking."""
 
     models = {}
     for name, config in MODELING["models"].items():
-        if config.get("enabled", False):
-            params = config.get("params", {}).copy()
-            
-            # Add random_state for models that support it
-            if name in ["RSF", "GradientBoosting", "ExtraTrees", "ComponentwiseGB"]:
-                params["random_state"] = SEED
+        if not config.get("enabled", False):
+            continue
 
-            # PyCox is handled separately by its training function, so we don't instantiate it here.
-            if name in model_classes:
-                models[name] = model_classes[name](**params)
+        try:
+            models[name] = _build_model_from_config(name)
+        except ValueError as err:
+            print(f"[WARN] {err}")
+
+    stacking_cfg = MODELING.get("stacking", {})
+    if stacking_cfg.get("enabled"):
+        try:
+            stacking_name, stacking_model = _build_stacking_model()
+            if stacking_model is not None:
+                models[stacking_name] = stacking_model
+        except ValueError as err:
+            print(f"[WARN] Unable to configure stacking model: {err}")
 
     return models

@@ -145,6 +145,25 @@ class CytoMolecularInteractionFeatures:
             if adverse_cols:
                 df_out["cyto_complex_and_mol_tp53"] = ((df_out[base_col] == 1) & (df_out[adverse_cols].sum(axis=1) > 0)).astype(int)
 
+        # --- Interaction 5: Lucky High Burden (RUNX1 + ASXL1/STAG2) ---
+        config_lucky = FEATURE_INTERACTIONS.get("lucky_high_burden_survivor", {})
+        if config_lucky.get("enabled") and config_lucky.get("base_col") in df_out.columns:
+            base_col = config_lucky["base_col"]
+            other_cols = [c for c in config_lucky.get("other_cols", []) if c in df_out.columns]
+            if other_cols:
+                is_other = (df_out[other_cols].sum(axis=1) > 0) # OR logic
+                df_out["lucky_high_burden_survivor"] = ((df_out[base_col] == 1) & is_other).astype(int)
+
+        # --- Interaction 6: Unlucky Low Burden (High Blast + Low Platelets) ---
+        config_unlucky = FEATURE_INTERACTIONS.get("unlucky_low_burden_aggressive", {})
+        if config_unlucky.get("enabled") and config_unlucky.get("base_col") in df_out.columns:
+            base_col = config_unlucky["base_col"]
+            other_cols = [c for c in config_unlucky.get("other_cols", []) if c in df_out.columns]
+            if other_cols:
+                # AND logic for all other cols
+                is_other = (df_out[other_cols].sum(axis=1) == len(other_cols))
+                df_out["unlucky_low_burden_aggressive"] = ((df_out[base_col] == 1) & is_other).astype(int)
+
         print(
             f"[FE Inter] {len(df_out.columns) - len(df.columns)} features d'interaction ajoutées."
         )

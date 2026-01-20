@@ -1,217 +1,99 @@
 import pandas as pd
 import numpy as np
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-
-import seaborn as sns
+import joblib
 import os
-from sklearn.inspection import permutation_importance
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import List
 
+# --- Import from your project structure ---
+from src.modeling.train import load_training_dataset_csv, get_survival_models
 
-from sksurv.ensemble import (
-    RandomSurvivalForest,
-    GradientBoostingSurvivalAnalysis,
-)
-from sksurv.linear_model import CoxPHSurvivalAnalysis
-from sksurv.util import Surv
+def plot_feature_importances_from_gb(model, feature_names: List[str], model_name: str, top_n: int = 30):
+    """
+    Génère et sauvegarde un graphique d'importance des features à partir d'un
+    modèle GradientBoostingSurvivalAnalysis entraîné.
+    """
+    if not hasattr(model, 'feature_importances_'):
+        print(f"❌ ERREUR: Le modèle '{model_name}' ne possède pas l'attribut 'feature_importances_'.")
+        return
 
-# ==============================================================================
-# 1. CONFIGURATION
-# ==============================================================================
+    importances = model.feature_importances_
 
+    feature_importance_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
+    feature_importance_df = feature_importance_df.sort_values('importance', ascending=False)
 
+    print("\nTop features (importance décroissante):")
+    print(feature_importance_df.head(top_n).to_string(index=False))
 
-INPUT_DIR = (
-    "datasets_processed"
-)
+    feature_importance_df = feature_importance_df.head(top_n)
 
-X_TRAIN_FILENAME = "X_train_processed.csv"
-Y_TRAIN_FILENAME = "y_train_processed.csv"
-
-
-OUTPUT_DIR = "reports/feature_importance"
-# --------------------------------------------------
-
-
-
-ID_COLUMN = "ID"
-GROUP_COLUMN = "CENTER_GROUP"
-
-# Noms des colonnes cibles dans y_train
-EVENT_STATUS_COL = "OS_STATUS"
-EVENT_TIME_COL = "OS_YEARS"
-
-
-MODELS_TO_RUN = ["rsf"]
-
-
-N_TOP_FEATURES = 150
-
-
-# ==============================================================================
-# 2. FONCTIONS UTILITAIRES
-# ==============================================================================
-
-
-def plot_feature_importance(importances: pd.Series, model_name: str, output_dir: str):
-    """Génère et sauvegarde un graphique en barres de l'importance des features."""
-
-    top_features = importances.head(N_TOP_FEATURES)
-
-    plt.figure(figsize=(12, N_TOP_FEATURES * 0.4))
-    sns.barplot(x=top_features.values, y=top_features.index, palette="viridis")
-
-    plt.title(
-        f"Top {N_TOP_FEATURES} Features les plus importantes - Modèle {model_name.upper()}",
-        fontsize=16,
-    )
-    plt.xlabel("Importance (Permutation)", fontsize=12)
-    plt.ylabel("Feature", fontsize=12)
-    plt.grid(axis="x", linestyle="--", alpha=0.6)
+    plt.figure(figsize=(12, top_n * 0.45))
+    sns.barplot(x='importance', y='feature', data=feature_importance_df, palette='rocket')
+    
+    plt.title(f'Top {top_n} Features les Plus Importantes - {model_name}', fontsize=16)
+    plt.xlabel('Importance (Gain moyen)', fontsize=12)
+    plt.ylabel('Feature', fontsize=12)
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
     plt.tight_layout()
 
-    # Sauvegarde du graphique
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, f"feature_importance_{model_name}.png")
-    plt.savefig(save_path, dpi=300)
-    print(f"Graphique sauvegardé : {save_path}")
-    plt.show()
-
-
-def plot_cox_coefficients(coefficients: pd.Series, output_dir: str):
-    """Génère un graphique spécifique pour les coefficients du modèle de Cox."""
-
-    pos_coefs = (
-        coefficients[coefficients > 0]
-        .sort_values(ascending=False)
-        .head(N_TOP_FEATURES // 2)
-    )
-    neg_coefs = (
-        coefficients[coefficients < 0]
-        .sort_values(ascending=True)
-        .head(N_TOP_FEATURES // 2)
-    )
-
-
-    plot_data = pd.concat([pos_coefs, neg_coefs]).sort_values(ascending=False)
-
-    colors = ["red" if c > 0 else "blue" for c in plot_data.values]
-
-    plt.figure(figsize=(14, N_TOP_FEATURES * 0.4))
-    sns.barplot(x=plot_data.values, y=plot_data.index, palette=colors)
-
-    plt.title(f"Features les plus importantes - Modèle de Cox", fontsize=16)
-    plt.xlabel("Coefficient (Log Hazard Ratio)", fontsize=12)
-    plt.ylabel("Feature", fontsize=12)
-    plt.axvline(x=0, color="black", linewidth=0.8, linestyle="--")
-    plt.grid(axis="x", linestyle="--", alpha=0.6)
-    plt.tight_layout()
-
-    save_path = os.path.join(output_dir, "feature_importance_cox.png")
-    plt.savefig(save_path, dpi=300)
-    print(f"Graphique sauvegardé : {save_path}")
-    plt.close()  # Ferme la figure
-
-
-# ==============================================================================
-# 3. SCRIPT PRINCIPAL
-# ==============================================================================
+    os.makedirs("reports", exist_ok=True)
+    save_path = f"reports/feature_importance_{model_name}.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    print(f"✓ Graphique d'importance des features sauvegardé dans : '{save_path}'")
+    plt.close()
 
 
 def main():
+    """
+    Script principal pour entraîner un modèle Gradient Boosting et générer son
+    graphique d'importance des features.
+    """
+    print("=" * 80)
+    print("  GÉNÉRATION DU RAPPORT D'IMPORTANCE (BASÉ SUR GRADIENT BOOSTING)")
+    print("=" * 80)
+    
+    # --- CONFIGUREZ CE CHEMIN ---
+    TRAIN_DATA_PATH = "datasets_processed/X_train_processed.csv"
+    # -----------------------------
 
-    print("=" * 60)
-    print("ÉTAPE 1: CHARGEMENT DES DONNÉES")
-    print("=" * 60)
+    print(f"\n[1/3] Chargement des données depuis : '{TRAIN_DATA_PATH}'...")
     try:
-        X = pd.read_csv(os.path.join(INPUT_DIR, X_TRAIN_FILENAME))
-        y_df = pd.read_csv(os.path.join(INPUT_DIR, Y_TRAIN_FILENAME))
-    except FileNotFoundError as e:
-        print(f"\nERREUR: Fichier non trouvé. {e}")
-        return
-    print(f"Données chargées. Shape de X_train : {X.shape}")
-    print("\n" + "=" * 60)
-    print("ÉTAPE 2: PRÉPARATION DES DONNÉES")
-    print("=" * 60)
-    feature_cols = [col for col in X.columns if col not in [ID_COLUMN, GROUP_COLUMN]]
-    X_features = X[feature_cols]
-    y_structured = Surv.from_dataframe(EVENT_STATUS_COL, EVENT_TIME_COL, y_df)
-    print(f"Préparation terminée. {X_features.shape[1]} features prêtes.")
-
-
-    for model_name in MODELS_TO_RUN:
-        print("\n" + "=" * 60)
-        print(f"ÉTAPE 3: ANALYSE AVEC LE MODÈLE {model_name.upper()}")
-        print("=" * 60)
-
-        model = None  # Initialisation
-        if model_name == "rsf":
-            model = RandomSurvivalForest(
-                n_estimators=100,
-                min_samples_split=15,
-                min_samples_leaf=20,
-                n_jobs=-1,
-                random_state=42,
-            )
-        elif model_name == "gbsa":
-            model = GradientBoostingSurvivalAnalysis(
-                n_estimators=200, learning_rate=0.05, max_depth=3, random_state=42
-            )
-        elif model_name == "cox":
-            X_cox = X_features.loc[:, X_features.std() > 0]
-            model = CoxPHSurvivalAnalysis(alpha=0.1)
-
-        if model is None:
-            print(f"Modèle '{model_name}' non reconnu.")
-            continue
-
-        print(f"Entraînement du modèle {model_name.upper()}...")
-        X_fit = X_cox if model_name == "cox" else X_features
-        model.fit(X_fit, y_structured)
-
-
-        if model_name == "rsf":
-            print("Calcul de l'importance par permutation pour RSF... (peut être long)")
-            perm_result = permutation_importance(
-                model,
-                X_features,
-                y_structured,
-                n_repeats=5,
-                random_state=42,
-                n_jobs=2,
-            )
-            importances = perm_result.importances_mean
-            importance_series = pd.Series(importances, index=X_features.columns)
-
-        elif model_name == "gbsa":
-            importances = model.feature_importances_
-            importance_series = pd.Series(importances, index=X_features.columns)
-
-        elif model_name == "cox":
-            importance_series = pd.Series(model.coef_, index=X_cox.columns)
-            sorted_importances = importance_series.reindex(
-                importance_series.abs().sort_values(ascending=False).index
-            )
-            print(f"\n--- TOP FEATURES (par magnitude) POUR LE MODÈLE COX ---")
-            print(sorted_importances.head(N_TOP_FEATURES))
-            plot_cox_coefficients(importance_series, OUTPUT_DIR)
-            continue
-
-        # Affichage et plotting pour RSF et GBSA
-        sorted_importances = importance_series.sort_values(ascending=False)
-        print(
-            f"\n--- TOP {N_TOP_FEATURES} FEATURES POUR LE MODÈLE {model_name.upper()} ---"
+        X_train, y_train = load_training_dataset_csv(
+            X_train_path=TRAIN_DATA_PATH,
+            y_train_path="datasets_processed/y_train_processed.csv"
         )
-        print(sorted_importances.head(N_TOP_FEATURES))
-        plot_feature_importance(sorted_importances, model_name, OUTPUT_DIR)
+        if 'ID' in X_train.columns:
+            X_train = X_train.drop(columns=['ID'])
+        feature_names = X_train.columns.tolist()
+        print(f"✓ {len(X_train)} échantillons et {len(feature_names)} features chargés.")
+    except FileNotFoundError:
+        print(f"❌ ERREUR: Fichier de données non trouvé.")
+        return
 
-    print("\n" + "=" * 60)
-    print("Analyse terminée.")
-    print("=" * 60)
+    print("\n[2/3] Entraînement du modèle Gradient Boosting pour l'analyse...")
+    # Utiliser les bons paramètres experts que nous avons définis
+    gb_model = get_survival_models()['GradientBoosting']
+    
+    try:
+        gb_model.fit(X_train, y_train)
+        print("✓ Modèle Gradient Boosting entraîné.")
+    except Exception as e:
+        print(f"❌ ERREUR lors de l'entraînement du modèle : {e}")
+        return
 
+    print("\n[3/3] Génération du graphique d'importance...")
+    plot_feature_importances_from_gb(
+        model=gb_model,
+        feature_names=feature_names,
+        model_name="GradientBoosting",
+        top_n=203
+    )
+    
+    print("\n" + "=" * 80)
 
 if __name__ == "__main__":
     main()

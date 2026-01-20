@@ -18,8 +18,27 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold, KFold
 from sksurv.metrics import concordance_index_ipcw
 from src.modeling.train import load_training_dataset_csv, get_survival_models
+from src.modeling.error_analysis import analyze_cv_errors
 from src.config import TAU, PREPROCESSING, EXPERIMENT
 from src.utils.experiment import compute_tag_with_signature, ensure_experiment_dir
+
+
+def _json_safe(obj):
+    """Recursively convert objects to JSON-serializable structures."""
+
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    if isinstance(obj, np.generic):
+        return obj.item()
+
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+
+    if isinstance(obj, (list, tuple, set)):
+        return [_json_safe(v) for v in obj]
+
+    return str(obj)
 
 
 def main():
@@ -80,7 +99,7 @@ def main():
     # Record model params for traceability
     for name, est in models.items():
         try:
-            training_report["models"][name] = est.get_params(deep=False)
+            training_report["models"][name] = _json_safe(est.get_params(deep=False))
         except Exception:
             training_report["models"][name] = "<params_unavailable>"
 
@@ -151,6 +170,13 @@ def main():
     summary_df.to_csv(summary_path_tag, index=False)
     # Save OOF predictions and fold scores
     oof_predictions.to_csv(os.path.join(exp_dir, "oof_predictions.csv"), index=True)
+    
+    # --- ERROR ANALYSIS ---
+    try:
+        analyze_cv_errors(oof_predictions, y, exp_dir)
+    except Exception as e:
+        print(f"[WARN] Error analysis failed: {e}")
+
     with open(os.path.join(exp_dir, "fold_scores.json"), "w", encoding="utf-8") as f:
         json.dump(
             {

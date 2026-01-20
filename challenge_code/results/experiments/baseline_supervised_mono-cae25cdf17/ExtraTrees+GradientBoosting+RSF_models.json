@@ -1,9 +1,0 @@
-{
-  "chosen_models": [
-    "ExtraTrees",
-    "GradientBoosting",
-    "RSF"
-  ],
-  "timestamp": "20251117_131203",
-  "result":0.7682509734251247
-}

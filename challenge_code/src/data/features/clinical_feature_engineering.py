@@ -14,6 +14,7 @@ from ...config import (
     SPECIFIC_ABNORMALITIES_TO_FLAG,
     CYTOGENETIC_EVENT_PATTERNS,
     CYTOGENETIC_PATTERNS,
+    CYTOGENETIC_NORMALIZATION_RULES,
     CLINICAL_COMPOSITE_SCORES
 )
 from .pruning import _apply_redundancy_policy
@@ -138,12 +139,26 @@ class CytogeneticFeatureExtraction:
     """
 
     @staticmethod
+    def _normalize_cyto_text(text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        normalized = text
+        for rule in CYTOGENETIC_NORMALIZATION_RULES:
+            pattern = rule.get("pattern")
+            replacement = rule.get("replacement", "")
+            if not pattern:
+                continue
+            normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+        return normalized
+
+    @staticmethod
     def _count_events_in_text(text: str) -> Dict[str, int]:
         if not isinstance(text, str):
             return {key: 0 for key in CYTOGENETIC_EVENT_PATTERNS.keys()}
         
         counts = {key: 0 for key in CYTOGENETIC_EVENT_PATTERNS.keys()}
-        tokens = re.split(r'[,;]', text)
+        normalized_text = CytogeneticFeatureExtraction._normalize_cyto_text(text)
+        tokens = re.split(r'[,;]', normalized_text)
         
         for token in tokens:
             token = token.strip().lower()
@@ -170,7 +185,9 @@ class CytogeneticFeatureExtraction:
         if "CYTOGENETICS" not in df.columns:
             return pd.DataFrame(index=df.index)
 
-        cyto_string_series = df["CYTOGENETICS"]
+        cyto_string_series = df["CYTOGENETICS"].apply(
+            CytogeneticFeatureExtraction._normalize_cyto_text
+        )
         
 
         parsed_data = cyto_string_series.apply(
@@ -190,6 +207,36 @@ class CytogeneticFeatureExtraction:
         result_df["near_triploidy"] = (
             (chromosome_count >= 60) & (chromosome_count <= 80)
         ).astype(int)
+
+        def _range_stats(text: str) -> Tuple[float, float, float, int]:
+            if not isinstance(text, str):
+                return (np.nan, np.nan, np.nan, 0)
+            matches = re.findall(r"(\d{1,2})\s*[-~]\s*(\d{1,2})", text)
+            if not matches:
+                return (np.nan, np.nan, np.nan, 0)
+            mins = [int(m[0]) for m in matches]
+            maxs = [int(m[1]) for m in matches]
+            overall_min = float(min(mins))
+            overall_max = float(max(maxs))
+            span = overall_max - overall_min
+            return (overall_min, overall_max, span, 1)
+
+        range_stats = cyto_string_series.apply(_range_stats)
+        range_df = pd.DataFrame(
+            range_stats.tolist(),
+            columns=[
+                "chromosome_count_min",
+                "chromosome_count_max",
+                "chromosome_range_span",
+                "chromosome_range_flag_temp",
+            ],
+            index=df.index,
+        )
+        range_df.rename(
+            columns={"chromosome_range_flag_temp": "chromosome_range_detected"},
+            inplace=True,
+        )
+        result_df = pd.concat([result_df, range_df], axis=1)
         
         sex_xx = cyto_string_series.str.contains(r"XX", na=False, case=False)
         sex_xy = cyto_string_series.str.contains(r"XY", na=False, case=False)
@@ -199,6 +246,18 @@ class CytogeneticFeatureExtraction:
         result_df["SEX_XX"] = (result_df["sex_chromosomes"] == 0).astype(int)
         result_df["SEX_XY"] = (result_df["sex_chromosomes"] == 1).astype(int)
         result_df["SEX_UNKNOWN"] = result_df["sex_chromosomes"].isna().astype(int)
+
+        sex_gain_pattern = r"\+\s*(?:x|y)(?:\[[^\]]+\])?"
+        sex_loss_pattern = r"-\s*(?:x|y)(?:\[[^\]]+\])?"
+        result_df["sex_chromosome_gain_count"] = (
+            cyto_string_series.str.count(sex_gain_pattern, flags=re.IGNORECASE).fillna(0)
+        )
+        result_df["sex_chromosome_loss_count"] = (
+            cyto_string_series.str.count(sex_loss_pattern, flags=re.IGNORECASE).fillna(0)
+        )
+        result_df["sex_chromosome_abnormality_flag"] = (
+            (result_df["sex_chromosome_gain_count"] + result_df["sex_chromosome_loss_count"]) > 0
+        ).astype(int)
 
 
         for name, pattern in SPECIFIC_ABNORMALITIES_TO_FLAG.items():
@@ -298,7 +357,7 @@ class CytogeneticFeatureExtraction:
         if pd.isna(cyto_string):
             return default_output
 
-        text = str(cyto_string).strip()
+        text = CytogeneticFeatureExtraction._normalize_cyto_text(str(cyto_string).strip())
         if re.fullmatch(r"normal", text, re.IGNORECASE):
             return {**default_output, "clone_count": 1, "total_cell_count": 1, "main_clone_cell_count": 1}
 

@@ -126,6 +126,12 @@ def _clean_survival_data(target_df: pd.DataFrame) -> pd.DataFrame:
         )
         target_clean = target_clean[~invalid_survival]
 
+    # Apply optional scaling (e.g., years -> months)
+    scaling_factor = PREPROCESSING.get("target_time_multiplier", 1.0)
+    if scaling_factor != 1.0:
+        print(f"   Scaling OS_YEARS by {scaling_factor}")
+        target_clean["OS_YEARS"] *= scaling_factor
+
     print(f"   Clean survival data: {len(target_clean)} patients")
     print(f"   Event rate: {target_clean['OS_STATUS'].mean():.1%}")
     print(f"   Median survival: {target_clean['OS_YEARS'].median():.2f} years")
