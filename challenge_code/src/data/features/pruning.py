@@ -1,0 +1,423 @@
+import os
+from typing import List, Optional, Sequence, Tuple, Set
+from ...config import MISSINGNESS_POLICY, REDUNDANCY_POLICY, PRUNING_POLICY
+import numpy as np
+import pandas as pd
+
+
+def _compute_upper_corr(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcule la matrice de corrélation absolue et garde uniquement la partie supérieure.
+    """
+    corr_matrix = df.corr(numeric_only=True).abs()
+    if corr_matrix.empty:
+        return corr_matrix
+    upper = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+    corr_matrix_upper = corr_matrix.where(upper)
+    return corr_matrix_upper
+
+
+def _apply_priority_rules(
+    corr_upper: pd.DataFrame,
+    threshold: float,
+    *,
+    protected: Optional[Set[str]] = None,
+) -> List[str]:
+    to_drop: set[str] = set()
+    rules = PRUNING_POLICY.get("priority_rules", [])
+    protected = protected or set()
+
+    for col in corr_upper.columns:
+        if col in protected:
+            continue
+        if col not in corr_upper.columns:
+            continue
+        strong_corrs = corr_upper.index[corr_upper[col] > threshold].tolist()
+        for correlated_col in strong_corrs:
+            if correlated_col in protected:
+                continue
+            if correlated_col not in corr_upper.index:
+                continue
+            
+            for rule in rules:
+                keep_pattern = rule["keep"]
+                drop_pattern = rule["drop"]
+
+                # Handle log rule specifically
+                if keep_pattern == "log_" and drop_pattern == "":
+                    if f"log_{col}" == correlated_col:
+                        to_drop.add(col)
+                    elif f"log_{correlated_col}" == col:
+                        to_drop.add(correlated_col)
+                    continue
+
+                if (drop_pattern in col and keep_pattern in correlated_col):
+                    to_drop.add(col)
+                elif (drop_pattern in correlated_col and keep_pattern in col):
+                    to_drop.add(correlated_col)
+
+    return list(to_drop)
+
+
+def prune_highly_correlated_features(
+    df: pd.DataFrame, threshold: float = None, id_cols: Optional[Sequence[str]] = None
+) -> pd.DataFrame:
+    """
+    Supprime les features fortement corrélées d'un DataFrame unique, en excluant
+    les colonnes d'identifiants. Utilisée pour compatibilité.
+    """
+    if id_cols is None:
+        id_cols = PRUNING_POLICY.get("default_id_cols", ("ID", "CENTER_GROUP"))
+    
+    if threshold is None:
+        threshold = PRUNING_POLICY.get("correlation_threshold", 0.9)
+
+    print(f"\n[PRUNING] Élagage des features (seuil > {threshold}) sur un DataFrame...")
+    df_to_prune = df.copy()
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("correlation_protected_features", []) or [])
+    ignored_prefixes = tuple(policy.get("correlation_ignored_prefixes", []) or [])
+
+
+    feature_cols = [
+        c
+        for c in df_to_prune.columns
+        if c not in id_cols and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+    ]
+    work_df = df_to_prune[feature_cols]
+
+    corr_upper = _compute_upper_corr(work_df)
+    if corr_upper.empty:
+        print(
+            "   -> Aucune colonne numérique trouvée pour la corrélation. Rien à supprimer."
+        )
+        return df_to_prune
+
+
+    to_drop = set(
+        _apply_priority_rules(corr_upper, threshold, protected=protected_cols)
+    )
+    df_mid = work_df.drop(columns=list(to_drop), errors="ignore")
+    print(f"   -> {len(to_drop)} features supprimées par règles de priorité.")
+
+
+    corr_upper2 = _compute_upper_corr(df_mid)
+    to_drop_final: set[str] = set()
+    for col in corr_upper2.columns:
+        if col in protected_cols:
+            continue
+        strong_corrs_final = [
+            other
+            for other in corr_upper2.index
+            if corr_upper2[col].get(other, np.nan) > threshold and other not in protected_cols
+        ]
+        if strong_corrs_final:
+            to_drop_final.update(strong_corrs_final)
+
+    df_final = df_mid.drop(columns=list(to_drop_final), errors="ignore")
+    print(
+        f"   -> {len(to_drop_final)} features supplémentaires supprimées par la méthode générale."
+    )
+
+
+    for id_col in reversed(list(id_cols)):
+        if id_col in df_to_prune.columns and id_col not in df_final.columns:
+
+            df_final.insert(0, id_col, df_to_prune[id_col].values)
+
+    # Conserver l'ordre initial autant que possible
+    ordered_cols = [c for c in df_to_prune.columns if c in df_final.columns]
+    return df_final[ordered_cols]
+
+
+def prune_highly_correlated_features_pair(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    threshold: float = None,
+    id_cols: Optional[Sequence[str]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Variante à 2 DataFrames: le choix des colonnes à supprimer est décidé depuis le train,
+    puis appliqué à train et test pour garder des schémas identiques.
+    """
+    if id_cols is None:
+        id_cols = PRUNING_POLICY.get("default_id_cols", ("ID", "CENTER_GROUP"))
+    if threshold is None:
+        threshold = PRUNING_POLICY.get("correlation_threshold", 0.9)
+    # Toujours travailler avec une liste pour l'indexation pandas
+    id_cols_list = [c for c in id_cols]
+
+    print(
+        f"\n[PRUNING] Élagage des features corrélées (seuil > {threshold}) basé sur le train..."
+    )
+
+    # Exclure les colonnes d'identifiants
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("correlation_protected_features", []) or [])
+    ignored_prefixes = tuple(policy.get("correlation_ignored_prefixes", []) or [])
+
+    feature_cols = [
+        c
+        for c in train_df.columns
+        if c not in id_cols_list and not any(c.startswith(prefix) for prefix in ignored_prefixes)
+    ]
+    train_feat = train_df[feature_cols]
+    test_feat = test_df.reindex(columns=feature_cols)
+
+
+    corr_upper = _compute_upper_corr(train_feat)
+    if corr_upper.empty:
+        print(
+            "   -> Aucune colonne numérique trouvée pour la corrélation. Rien à supprimer."
+        )
+        return train_df.copy(), test_df.copy()
+
+    to_drop_priority = set(
+        _apply_priority_rules(corr_upper, threshold, protected=protected_cols)
+    )
+    train_mid = train_feat.drop(columns=list(to_drop_priority), errors="ignore")
+    print(f"   -> {len(to_drop_priority)} features supprimées par règles de priorité.")
+
+
+    corr_upper2 = _compute_upper_corr(train_mid)
+    to_drop_general: set[str] = set()
+    for col in corr_upper2.columns:
+        if col in protected_cols:
+            continue
+        strong_corrs_final = [
+            other
+            for other in corr_upper2.index
+            if corr_upper2[col].get(other, np.nan) > threshold and other not in protected_cols
+        ]
+        if strong_corrs_final:
+            to_drop_general.update(strong_corrs_final)
+
+    kept_cols = [c for c in train_mid.columns if c not in to_drop_general]
+    print(
+        f"   -> {len(to_drop_general)} features supplémentaires supprimées par la méthode générale."
+    )
+    print(list(to_drop_general))
+    id_cols_present_train = [c for c in id_cols_list if c in train_df.columns]
+    id_cols_present_test = [c for c in id_cols_list if c in test_df.columns]
+
+    pruned_train = (
+        pd.concat([train_df[id_cols_present_train].copy(), train_df[kept_cols]], axis=1)
+        if id_cols_present_train
+        else train_df[kept_cols]
+    )
+    pruned_test = (
+        pd.concat([test_df[id_cols_present_test].copy(), test_feat[kept_cols]], axis=1)
+        if id_cols_present_test
+        else test_feat[kept_cols]
+    )
+
+    return pruned_train, pruned_test
+
+
+def apply_pruning_to_processed_files(
+    input_train_path: str,
+    input_test_path: str,
+    output_train_path: Optional[str] = None,
+    output_test_path: Optional[str] = None,
+    threshold: float = 0.90,
+    id_cols: Optional[Sequence[str]] = None,
+) -> Tuple[str, str]:
+    """
+    Utilitaire pour appliquer l'élagage directement sur des fichiers CSV 'processed'.
+    Écrit par défaut par-dessus les fichiers d'entrée.
+    """
+    if output_train_path is None:
+        output_train_path = input_train_path
+    if output_test_path is None:
+        output_test_path = input_test_path
+
+    X_train = pd.read_csv(input_train_path)
+    X_test = pd.read_csv(input_test_path)
+
+    pruned_train, pruned_test = prune_highly_correlated_features_pair(
+        X_train, X_test, threshold=threshold, id_cols=id_cols
+    )
+
+    os.makedirs(os.path.dirname(output_train_path) or ".", exist_ok=True)
+    pruned_train.to_csv(output_train_path, index=False)
+    pruned_test.to_csv(output_test_path, index=False)
+
+    return output_train_path, output_test_path
+
+
+__all__ = [
+    "prune_highly_correlated_features",
+    "prune_highly_correlated_features_pair",
+    "apply_pruning_to_processed_files",
+]
+
+
+# -----------------
+# Redundancy cleanup
+# -----------------
+def _apply_redundancy_policy(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    policy = REDUNDANCY_POLICY or {}
+    drop_cols: List[str] = []
+
+    # Drop numeric sex encoding when one-hot is present
+    if policy.get("drop_sex_numeric_if_ohe", True):
+        if {"SEX_XX", "SEX_XY"}.issubset(
+            df.columns
+        ) and "sex_chromosomes" in df.columns:
+            drop_cols.append("sex_chromosomes")
+
+    # Drop *_count when *_altered exists
+    if policy.get("drop_count_when_binary_exists", True):
+        for c in df.columns:
+            if c.endswith("_count"):
+                alt = c.replace("_count", "_altered")
+                if alt in df.columns:
+                    drop_cols.append(c)
+    # Drop *_count when matching any_* exists
+    if policy.get("drop_count_when_any_exists", True):
+        for c in df.columns:
+            if c.endswith("_count"):
+                base = c[: -len("_count")]
+                # Keep COSMIC counts even if an any_ flag exists; these counts
+                # are valuable and should not be auto-dropped by the generic
+                # redundancy policy.
+                if base.startswith("cosmic_"):
+                    continue
+                any_col = f"any_{base}"
+                if any_col in df.columns:
+                    drop_cols.append(c)
+
+    # Prune missingness indicators except whitelisted
+    if policy.get("prune_missingness_indicators", True):
+        keep = set(MISSINGNESS_POLICY.get("keep_columns", []))
+        miss = [c for c in df.columns if c.endswith("_missing")]
+        for c in miss:
+            base = c[:-8]
+            if base not in keep:
+                drop_cols.append(c)
+
+    # Explicit drops
+    for c in policy.get("explicit_drop", []):
+        if c in df.columns:
+            drop_cols.append(c)
+
+    if drop_cols:
+        df = df.drop(columns=sorted(set(drop_cols)), errors="ignore")
+    return df
+
+
+def prune_rare_binary_features(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    threshold: float,
+    ignore_cols: List[str],
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Identifie et supprime les features binaires rares des jeux d'entraînement et de test.
+    """
+    print("Démarrage du pruning des features binaires rares...")
+
+    train_df_pruned = train_df.copy()
+    test_df_pruned = test_df.copy()
+
+    policy = PRUNING_POLICY or {}
+    protected_cols = set(policy.get("rare_binary_protected_features", []))
+    protected_prefixes = tuple(policy.get("rare_binary_protected_prefixes", []) or [])
+    aggregations = policy.get("rare_feature_aggregations", [])
+
+    def _apply_rare_aggregations(df: pd.DataFrame) -> list[str]:
+        created: list[str] = []
+        for agg in aggregations:
+            output_col = agg.get("output_col")
+            source_cols = agg.get("features", []) or []
+            if not output_col:
+                continue
+            available = [c for c in source_cols if c in df.columns]
+            mode = agg.get("mode", "any")
+
+            if available:
+                source_frame = df[available].fillna(0)
+                combined = source_frame.sum(axis=1)
+            else:
+                combined = pd.Series(0, index=df.index)
+
+            if mode == "sum":
+                df[output_col] = combined.astype(float)
+            else:
+                df[output_col] = (combined > 0).astype(int)
+
+            created.append(output_col)
+        return created
+
+    if aggregations:
+        print("[PRUNING] Ajout de features agrégées pour événements rares:")
+        agg_cols = _apply_rare_aggregations(train_df_pruned)
+        _apply_rare_aggregations(test_df_pruned)
+        if agg_cols:
+            print(f"   -> Colonnes créées: {agg_cols}")
+            protected_cols.update(agg_cols)
+
+    if protected_cols:
+        existing_protected = [c for c in protected_cols if c in train_df_pruned.columns]
+        if existing_protected:
+            print(
+                f"[PRUNING] Protection activée pour {len(existing_protected)} features critiques: {existing_protected}"
+            )
+
+    cols_to_prune = []
+
+
+    for col in train_df_pruned.columns:
+        if col in ignore_cols or col in protected_cols:
+            continue
+        if protected_prefixes and col.startswith(protected_prefixes):
+            continue
+
+
+
+        unique_vals = pd.unique(train_df_pruned[col].dropna())
+        is_binary = np.all(np.isin(unique_vals, [0, 1]))
+
+        if is_binary:
+
+            prevalence_train = train_df_pruned[col].mean()
+
+
+            prevalence_test = 0
+            if col in test_df_pruned.columns:
+                prevalence_test = test_df_pruned[col].mean()
+
+            # On supprime si la feature est rare DANS L'UN OU L'AUTRE des jeux
+            if prevalence_train < threshold or prevalence_test < threshold:
+                cols_to_prune.append(col)
+
+    if cols_to_prune:
+        print(
+            f"\n{len(cols_to_prune)} features rares identifiées pour suppression (prévalence < {threshold:.2%}):"
+        )
+        print(f"{cols_to_prune} will be supp")
+
+        groups = {}
+        for col in sorted(cols_to_prune):
+            prefix = col.split("_")[0]
+            if prefix not in groups:
+                groups[prefix] = []
+            groups[prefix].append(col)
+
+        for prefix, features in groups.items():
+            print(f"  - {prefix.upper()}: {features}")
+
+        # Supprimer les colonnes des deux dataframes
+        train_df_pruned.drop(columns=cols_to_prune, inplace=True, errors="ignore")
+        test_df_pruned.drop(columns=cols_to_prune, inplace=True, errors="ignore")
+
+        print(f"\nShape de X_train après pruning : {train_df_pruned.shape}")
+        print(f"Shape de X_test après pruning  : {test_df_pruned.shape}")
+    else:
+        print(
+            "\nAucune feature binaire rare n'a été trouvée. Aucune suppression nécessaire."
+        )
+
+    return train_df_pruned, test_df_pruned

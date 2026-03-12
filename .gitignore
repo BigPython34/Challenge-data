@@ -31,7 +31,7 @@ challenge_code/models/*.joblib
 
 # GROS FICHIERS DE DONNÉES
 # Ignorer les datasets volumineux
-*.csv
+
 *.parquet
 *.feather
 *.arrow
@@ -40,10 +40,8 @@ challenge_code/models/*.joblib
 *.zarr
 *.npy
 *.npz
-*.json
-*.jsonl
-*.tsv
-*.txt
+*clinvar.vcf
+
 
 # Sauf les petits fichiers de config
 !requirements.txt
@@ -250,3 +248,5 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+*sshkey

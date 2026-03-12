@@ -1,0 +1,8 @@
+name,size,score
+GradientBoosting,1,0.7092469136725398
+GradientBoosting + ExtraTrees,2,0.7078083427085966
+RSF + GradientBoosting,2,0.7066188361654313
+RSF + GradientBoosting + ExtraTrees,3,0.7056166498850681
+RSF + ExtraTrees,2,0.7002596153222791
+ExtraTrees,1,0.6992203240389705
+RSF,1,0.69901442407998

@@ -1,0 +1,38 @@
+{
+  "n_rows_with_idem": 106,
+  "n_rows_with_dic": 16,
+  "n_rows": 2936,
+  "present_special_tokens": {
+    "dic": true,
+    "idem": true,
+    "+mar": true,
+    "der": true,
+    "ins": true,
+    "i()": true
+  },
+  "top_monosomies": {
+    "7": 198,
+    "5": 71,
+    "18": 61,
+    "17": 58,
+    "13": 46,
+    "20": 45,
+    "21": 32,
+    "16": 29,
+    "12": 27,
+    "22": 23
+  },
+  "top_trisomies": {
+    "8": 254,
+    "21": 50,
+    "1": 41,
+    "19": 25,
+    "11": 23,
+    "22": 20,
+    "9": 15,
+    "14": 15,
+    "15": 13,
+    "13": 11
+  },
+  "config_present": false
+}

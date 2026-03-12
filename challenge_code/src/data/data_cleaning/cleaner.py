@@ -5,10 +5,52 @@ This module handles the initial cleaning and validation of clinical,
 molecular, and survival data for AML patients.
 """
 
+from typing import Tuple
 import pandas as pd
 import numpy as np
-from typing import Tuple
-import warnings
+from ...config import CLINICAL_RANGES, PREPROCESSING
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class ClipQuantiles(BaseEstimator, TransformerMixin):
+    """
+    Clippe les colonnes et est maintenant 100% compatible avec l'API set_output.
+    """
+
+    def __init__(self, lower=None, upper=None):
+        self.lower = lower
+        self.upper = upper
+
+    def fit(self, X, y=None):
+        # S'assurer que X est un DataFrame pour utiliser .quantile
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+            
+        clip_quantiles_config = PREPROCESSING.get("clip_quantiles", {})
+        lower = self.lower if self.lower is not None else clip_quantiles_config.get("lower", 0.01)
+        upper = self.upper if self.upper is not None else clip_quantiles_config.get("upper", 0.99)
+
+        self.lower_bounds_ = X.quantile(lower)
+        self.upper_bounds_ = X.quantile(upper)
+        self.feature_names_in_ = X.columns.tolist()
+        return self
+
+    def transform(self, X) -> pd.DataFrame:
+        """Applique le clipping tout en garantissant la préservation de l'index."""
+        return X.clip(lower=self.lower_bounds_, upper=self.upper_bounds_, axis=1)
+
+
+    def set_output(self, transform=None):
+        """
+        Méthode requise par scikit-learn pour gérer la configuration de la sortie.
+        """
+        return self
+
+    def get_feature_names_out(self, input_features=None):
+        """
+        Méthode requise pour propager les noms de colonnes dans la pipeline.
+        """
+        return self.feature_names_in_
 
 
 def clean_and_validate_data(
@@ -84,6 +126,12 @@ def _clean_survival_data(target_df: pd.DataFrame) -> pd.DataFrame:
         )
         target_clean = target_clean[~invalid_survival]
 
+    # Apply optional scaling (e.g., years -> months)
+    scaling_factor = PREPROCESSING.get("target_time_multiplier", 1.0)
+    if scaling_factor != 1.0:
+        print(f"   Scaling OS_YEARS by {scaling_factor}")
+        target_clean["OS_YEARS"] *= scaling_factor
+
     print(f"   Clean survival data: {len(target_clean)} patients")
     print(f"   Event rate: {target_clean['OS_STATUS'].mean():.1%}")
     print(f"   Median survival: {target_clean['OS_YEARS'].median():.2f} years")
@@ -119,9 +167,8 @@ def _clean_clinical_data(
 
     for col in numeric_cols:
         if col in clinical_clean.columns:
-            # Convert to numeric
+            # Convert to numeric and coerce errors to NaN
             clinical_clean[col] = pd.to_numeric(clinical_clean[col], errors="coerce")
-
             # Apply biologically plausible ranges
             clinical_clean = _apply_clinical_ranges(clinical_clean, col)
 
@@ -133,41 +180,60 @@ def _clean_molecular_data(
     molecular_df: pd.DataFrame, target_clean: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Clean and validate molecular mutation data.
-
-    Parameters
-    ----------
-    molecular_df : pd.DataFrame
-        Raw molecular data
-    target_clean : pd.DataFrame
-        Cleaned survival data for patient filtering
-
-    Returns
-    -------
-    pd.DataFrame
-        Cleaned molecular data
+    Nettoie et valide les données de mutation, avec une gestion spéciale
+    pour les événements cliniques importants comme FLT3_ITD.
     """
     print("Cleaning molecular data...")
 
-    # Keep only patients with survival data
     molecular_clean = molecular_df[molecular_df["ID"].isin(target_clean["ID"])].copy()
 
-    # Validate mutation data
     molecular_clean["VAF"] = pd.to_numeric(molecular_clean["VAF"], errors="coerce")
     molecular_clean["DEPTH"] = pd.to_numeric(molecular_clean["DEPTH"], errors="coerce")
 
-    # Filter low-quality mutations
-    # VAF must be between 0 and 1, depth > 10 for reliability
-    valid_mutations = (
+
+
+
+    high_quality_mutations = (
         (molecular_clean["VAF"] >= 0)
         & (molecular_clean["VAF"] <= 1)
         & (molecular_clean["DEPTH"] >= 10)
     )
 
-    invalid_count = (~valid_mutations).sum()
-    if invalid_count > 0:
-        print(f"   Removing {invalid_count} low-quality mutations")
-        molecular_clean = molecular_clean[valid_mutations]
+
+
+    # On identifie les FLT3_ITD par la colonne 'EFFECT' ou 'PROTEIN_CHANGE'.
+    is_flt3_itd = (molecular_clean["EFFECT"].astype(str).str.upper() == "ITD") | (
+        molecular_clean["PROTEIN_CHANGE"]
+        .astype(str)
+        .str.contains("ITD", na=False, case=False)
+    )
+
+
+
+    gene_str = molecular_clean["GENE"].astype(str).str.upper()
+    effect_str = molecular_clean["EFFECT"].astype(str).str.upper()
+    protein_str = molecular_clean["PROTEIN_CHANGE"].astype(str).str.upper()
+    is_mll_gene = gene_str.isin(["MLL", "KMT2A"])  # synonymes
+    has_ptd = effect_str.str.contains("PTD", na=False) | protein_str.str.contains(
+        "PTD|MLL_PTD", na=False
+    )
+    is_mll_ptd = is_mll_gene & has_ptd
+
+
+    valid_mutations = high_quality_mutations | is_flt3_itd | is_mll_ptd
+
+
+    removed_count = (~high_quality_mutations & ~is_flt3_itd & ~is_mll_ptd).sum()
+
+    if removed_count > 0:
+        print(
+            f"   Removing {removed_count} low-quality mutations (FLT3_ITD's are preserved)"
+        )
+        molecular_clean = molecular_clean[
+            valid_mutations
+        ].copy()  # Utiliser .copy() ici
+    else:
+        print("   -> No low-quality mutations removed.")
 
     print(
         f"   Clean molecular data: {len(molecular_clean)} mutations across "
@@ -178,48 +244,19 @@ def _clean_molecular_data(
 
 
 def _apply_clinical_ranges(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """
-    Apply biologically plausible ranges to clinical measurements.
+    """Applique des plages biologiquement plausibles aux mesures cliniques."""
+    if column not in CLINICAL_RANGES:
+        return df
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Clinical data
-    column : str
-        Column name to validate
-
-    Returns
-    -------
-    pd.DataFrame
-        Data with out-of-range values set to NaN
-    """
     original_count = df[column].notna().sum()
+    min_val, max_val = CLINICAL_RANGES[column]
 
-    if column == "BM_BLAST":
-        # Bone marrow blasts cannot exceed 100%
-        df.loc[df[column] > 100, column] = np.nan
-
-    elif column in ["WBC", "ANC", "MONOCYTES", "PLT"]:
-        # Cell counts cannot be negative
-        df.loc[df[column] < 0, column] = np.nan
-
-        # Extremely high values are likely errors (> 99.9th percentile of medical literature)
-        if column == "WBC":
-            df.loc[df[column] > 500, column] = np.nan  # 500k/µL is extremely high
-        elif column in ["ANC", "MONOCYTES"]:
-            df.loc[df[column] > 100, column] = np.nan  # 100k/µL is extremely high
-        elif column == "PLT":
-            df.loc[df[column] > 2000, column] = (
-                np.nan
-            )  # 2M platelets/µL is extremely high
-
-    elif column == "HB":
-        # Hemoglobin must be in reasonable range
-        df.loc[(df[column] < 2) | (df[column] > 25), column] = np.nan
+    # Appliquer les bornes
+    df.loc[(df[column] < min_val) | (df[column] > max_val), column] = np.nan
 
     invalid_count = original_count - df[column].notna().sum()
     if invalid_count > 0:
-        print(f"   {column}: {invalid_count} out-of-range values set to NaN")
+        print(f"   -> {invalid_count} valeurs invalides mises à NaN dans '{column}'")
 
     return df
 

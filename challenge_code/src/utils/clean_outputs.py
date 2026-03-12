@@ -15,7 +15,7 @@ def clean_directory(directory, pattern="*", extensions_only=False):
         return 0
 
     if extensions_only:
-        # Pour les extensions, chercher récursivement
+
         files = []
         for ext in pattern if isinstance(pattern, list) else [pattern]:
             files.extend(Path(directory).rglob(ext))
@@ -75,8 +75,14 @@ def main():
     )
 
     total_cleaned += clean_directory(
+        "datasets_processed", ["*.csv"], extensions_only=True
+    )
+
+    total_cleaned += clean_directory(
         ".", ["*.png", "*.jpg", "*.pdf"], extensions_only=True
     )
+
+    total_cleaned += clean_directory("submissions", ["*.csv"], extensions_only=True)
 
     total_cleaned += clean_directory(".", "__pycache__")
     total_cleaned += clean_directory("src", "__pycache__")

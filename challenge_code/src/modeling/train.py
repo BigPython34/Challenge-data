@@ -13,8 +13,12 @@ from sksurv.ensemble import (
     ComponentwiseGradientBoostingSurvivalAnalysis,
 )
 from sksurv.linear_model import CoxPHSurvivalAnalysis, CoxnetSurvivalAnalysis
+from sksurv.meta import Stacking
 from sksurv.metrics import concordance_index_ipcw
+from sksurv.util import Surv
 import warnings
+import pickle
+
 
 # PyCox imports
 try:
@@ -28,14 +32,7 @@ except ImportError:
 
 from ..config import (
     SEED,
-    MODEL_DIR,
-    COX_PARAMS,
-    RSF_PARAMS,
-    GRADIENT_BOOSTING_PARAMS,
-    COXNET_PARAMS,
-    EXTRA_TREES_PARAMS,
-    COMPONENTWISE_GB_PARAMS,
-    PYCOX_DEEPSURV_PARAMS,
+    MODELING,
 )
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -50,305 +47,122 @@ class PyCoxWrapper:
         self.labtrans = labtrans
 
     def predict(self, X):
-        """Prédiction compatible avec scikit-survival"""
+        """Prediction compatible with scikit-survival"""
         X_np = X.values if hasattr(X, "values") else X
         X_scaled = self.scaler.transform(X_np).astype(np.float32)
 
-        # Prédiction des log hazards
+        # Prediction of log hazards
         log_h = self.model.predict(X_scaled)
         return log_h.flatten()
 
     def predict_surv_df(self, X):
-        """Prédiction des courbes de survie (méthode PyCox)"""
+        """Prediction of survival curves (PyCox method)"""
         X_np = X.values if hasattr(X, "values") else X
         X_scaled = self.scaler.transform(X_np).astype(np.float32)
         return self.model.predict_surv_df(X_scaled)
 
 
-def train_cox_model(X_train, y_train, alpha=None):
-    """Entraîne un modèle Cox Proportional Hazards avec paramètres du config"""
-    if alpha is None:
-        alpha = COX_PARAMS["alpha"]
-    cox = CoxPHSurvivalAnalysis(alpha=alpha)
-    cox.fit(X_train, y_train)
-    return cox
+class DeepSurvEstimator:
+    """Sklearn-like estimator that wraps the PyCox DeepSurv training routine."""
 
-
-def train_rsf_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    min_samples_split=None,
-    min_samples_leaf=None,
-    max_depth=None,
-):
-    """Entraîne un modèle Random Survival Forest avec paramètres du config"""
-    n_estimators = (
-        n_estimators if n_estimators is not None else RSF_PARAMS["n_estimators"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else RSF_PARAMS["min_samples_split"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else RSF_PARAMS["min_samples_leaf"]
-    )
-    max_depth = max_depth if max_depth is not None else RSF_PARAMS["max_depth"]
-    rsf = RandomSurvivalForest(
-        n_estimators=n_estimators,
-        min_samples_split=min_samples_split,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,
-        random_state=SEED,
-    )
-    rsf.fit(X_train, y_train)
-    return rsf
-
-
-def train_gradient_boosting_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    learning_rate=None,
-    max_depth=None,
-    subsample=None,
-    min_samples_leaf=None,
-    min_samples_split=None,
-):
-    """Entraîne un modèle Gradient Boosting Survival Analysis avec paramètres du config"""
-    n_estimators = (
-        n_estimators
-        if n_estimators is not None
-        else GRADIENT_BOOSTING_PARAMS["n_estimators"]
-    )
-    learning_rate = (
-        learning_rate
-        if learning_rate is not None
-        else GRADIENT_BOOSTING_PARAMS["learning_rate"]
-    )
-    max_depth = (
-        max_depth if max_depth is not None else GRADIENT_BOOSTING_PARAMS["max_depth"]
-    )
-    subsample = (
-        subsample if subsample is not None else GRADIENT_BOOSTING_PARAMS["subsample"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else GRADIENT_BOOSTING_PARAMS["min_samples_leaf"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else GRADIENT_BOOSTING_PARAMS["min_samples_split"]
-    )
-    xgb_surv = GradientBoostingSurvivalAnalysis(
-        random_state=SEED,
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        max_depth=max_depth,
-        subsample=subsample,
-        min_samples_leaf=min_samples_leaf,
-        min_samples_split=min_samples_split,
-    )
-    xgb_surv.fit(X_train, y_train)
-    return xgb_surv
-
-
-def train_coxnet_model(X_train, y_train, l1_ratio=None, n_alphas=None, max_iter=None):
-    """Entraîne un modèle Cox avec régularisation élastique (CoxNet)"""
-    l1_ratio = l1_ratio if l1_ratio is not None else COXNET_PARAMS["l1_ratio"]
-    n_alphas = n_alphas if n_alphas is not None else COXNET_PARAMS["n_alphas"]
-    max_iter = max_iter if max_iter is not None else COXNET_PARAMS["max_iter"]
-
-    coxnet = CoxnetSurvivalAnalysis(
-        l1_ratio=l1_ratio,
-        n_alphas=n_alphas,
-        normalize=COXNET_PARAMS["normalize"],
-        max_iter=max_iter,
-    )
-    coxnet.fit(X_train, y_train)
-    return coxnet
-
-
-def train_extra_trees_model(
-    X_train,
-    y_train,
-    n_estimators=None,
-    min_samples_split=None,
-    min_samples_leaf=None,
-    max_depth=None,
-    max_features=None,
-):
-    """Entraîne un modèle Extra Survival Trees"""
-    n_estimators = (
-        n_estimators if n_estimators is not None else EXTRA_TREES_PARAMS["n_estimators"]
-    )
-    min_samples_split = (
-        min_samples_split
-        if min_samples_split is not None
-        else EXTRA_TREES_PARAMS["min_samples_split"]
-    )
-    min_samples_leaf = (
-        min_samples_leaf
-        if min_samples_leaf is not None
-        else EXTRA_TREES_PARAMS["min_samples_leaf"]
-    )
-    max_depth = max_depth if max_depth is not None else EXTRA_TREES_PARAMS["max_depth"]
-    max_features = (
-        max_features if max_features is not None else EXTRA_TREES_PARAMS["max_features"]
-    )
-
-    extra_trees = ExtraSurvivalTrees(
-        n_estimators=n_estimators,
-        min_samples_split=min_samples_split,
-        min_samples_leaf=min_samples_leaf,
-        max_depth=max_depth,
-        max_features=max_features,
-        random_state=SEED,
-    )
-    extra_trees.fit(X_train, y_train)
-    return extra_trees
-
-
-def train_componentwise_gb_model(
-    X_train, y_train, n_estimators=None, learning_rate=None, subsample=None
-):
-    """Entraîne un modèle Componentwise Gradient Boosting"""
-    n_estimators = (
-        n_estimators
-        if n_estimators is not None
-        else COMPONENTWISE_GB_PARAMS["n_estimators"]
-    )
-    learning_rate = (
-        learning_rate
-        if learning_rate is not None
-        else COMPONENTWISE_GB_PARAMS["learning_rate"]
-    )
-    subsample = (
-        subsample if subsample is not None else COMPONENTWISE_GB_PARAMS["subsample"]
-    )
-
-    comp_gb = ComponentwiseGradientBoostingSurvivalAnalysis(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        subsample=subsample,
-        random_state=SEED,
-    )
-    comp_gb.fit(X_train, y_train)
-    return comp_gb
-
-
-def save_model(model, model_name, params=None):
-    """Sauvegarde un modèle avec un nom basé sur ses paramètres"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if params:
-        param_str = "_".join([f"{k}{v}" for k, v in params.items()])
-        filename = f"{model_name}_{param_str}_{timestamp}.pkl"
-    else:
-        filename = f"{model_name}_{timestamp}.pkl"
-
-    filepath = os.path.join(MODEL_DIR, filename)
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    joblib.dump(model, filepath)
-    print(f"Modèle sauvegardé: {filepath}")
-    return filepath
-
-
-def load_model(filepath):
-    """Charge un modèle sauvegardé"""
-    return joblib.load(filepath)
-
-
-def train_and_save_all_models(X_train, y_train, X_val=None, y_val=None):
-    """Entraîne et sauvegarde tous les modèles de scikit-survival"""
-    models = {}
-
-    # Cox Proportional Hazards
-    print("Entraînement du modèle Cox...")
-    cox = train_cox_model(X_train, y_train)
-    cox_path = save_model(cox, "cox", COX_PARAMS)
-    models["cox"] = {"model": cox, "path": cox_path, "params": COX_PARAMS}
-
-    # Random Survival Forest
-    print("Entraînement du modèle Random Survival Forest...")
-    rsf = train_rsf_model(X_train, y_train)
-    rsf_path = save_model(rsf, "rsf", RSF_PARAMS)
-    models["rsf"] = {"model": rsf, "path": rsf_path, "params": RSF_PARAMS}
-
-    # Gradient Boosting Survival Analysis
-    print("Entraînement du modèle Gradient Boosting...")
-    xgb = train_gradient_boosting_model(X_train, y_train)
-    xgb_path = save_model(xgb, "gradient_boosting", GRADIENT_BOOSTING_PARAMS)
-    models["gradient_boosting"] = {
-        "model": xgb,
-        "path": xgb_path,
-        "params": GRADIENT_BOOSTING_PARAMS,
-    }
-
-    # CoxNet (Cox avec régularisation)
-    print("Entraînement du modèle CoxNet...")
-    try:
-        coxnet = train_coxnet_model(X_train, y_train)
-        coxnet_path = save_model(coxnet, "coxnet", COXNET_PARAMS)
-        models["coxnet"] = {
-            "model": coxnet,
-            "path": coxnet_path,
-            "params": COXNET_PARAMS,
-        }
-    except Exception as e:
-        print(f"  Erreur CoxNet: {e}")
-
-    # Extra Survival Trees
-    print("Entraînement du modèle Extra Survival Trees...")
-    try:
-        extra_trees = train_extra_trees_model(X_train, y_train)
-        extra_trees_path = save_model(extra_trees, "extra_trees", EXTRA_TREES_PARAMS)
-        models["extra_trees"] = {
-            "model": extra_trees,
-            "path": extra_trees_path,
-            "params": EXTRA_TREES_PARAMS,
-        }
-    except Exception as e:
-        print(f"   Erreur Extra Trees: {e}")
-
-    # Componentwise Gradient Boosting
-    print("Entraînement du modèle Componentwise Gradient Boosting...")
-    try:
-        comp_gb = train_componentwise_gb_model(X_train, y_train)
-        comp_gb_path = save_model(comp_gb, "componentwise_gb", COMPONENTWISE_GB_PARAMS)
-        models["componentwise_gb"] = {
-            "model": comp_gb,
-            "path": comp_gb_path,
-            "params": COMPONENTWISE_GB_PARAMS,
-        }
-    except Exception as e:
-        print(f"  Erreur Componentwise GB: {e}")
-
-    # PyCox DeepSurv
-    if PYCOX_AVAILABLE:
-        print("Entraînement du modèle PyCox DeepSurv...")
-        try:
-            pycox_deepsurv = train_pycox_deepsurv_model(X_train, y_train, X_val, y_val)
-            pycox_path = save_model(
-                pycox_deepsurv, "pycox_deepsurv", PYCOX_DEEPSURV_PARAMS
+    def __init__(self, **params):
+        if not PYCOX_AVAILABLE:
+            raise ImportError(
+                "PyCox is not installed. Install it with: pip install pycox torchtuples"
             )
-            models["pycox_deepsurv"] = {
-                "model": pycox_deepsurv,
-                "path": pycox_path,
-                "params": PYCOX_DEEPSURV_PARAMS,
-            }
-        except Exception as e:
-            print(f"   Erreur PyCox DeepSurv: {e}")
-    else:
-        print("   PyCox non disponible, DeepSurv ignore")
+        self.params = params.copy()
+        self.model_ = None
 
-    return models
+    def fit(self, X, y):
+        self.model_ = train_pycox_deepsurv_model(X, y, **self.params)
+        return self
+
+    def predict(self, X):
+        if self.model_ is None:
+            raise RuntimeError("DeepSurvEstimator must be fitted before predicting.")
+        return self.model_.predict(X)
+
+    def predict_surv_df(self, X):
+        if self.model_ is None:
+            raise RuntimeError("DeepSurvEstimator must be fitted before predicting.")
+        return self.model_.predict_surv_df(X)
+
+    def get_params(self, deep=False):
+        return self.params.copy()
+
+
+MODEL_CLASS_MAP = {
+    "Cox": CoxPHSurvivalAnalysis,
+    "RSF": RandomSurvivalForest,
+    "GradientBoosting": GradientBoostingSurvivalAnalysis,
+    "CoxNet": CoxnetSurvivalAnalysis,
+    "ExtraTrees": ExtraSurvivalTrees,
+    "ComponentwiseGB": ComponentwiseGradientBoostingSurvivalAnalysis,
+}
+
+if PYCOX_AVAILABLE:
+    MODEL_CLASS_MAP["DeepSurv"] = DeepSurvEstimator
+
+
+RANDOM_STATE_MODELS = {"RSF", "GradientBoosting", "ExtraTrees", "ComponentwiseGB"}
+
+
+def _build_model_from_config(name):
+    """Instantiate a survival model described in MODELING config."""
+
+    model_cfg = MODELING["models"].get(name)
+    if model_cfg is None:
+        raise ValueError(f"Model '{name}' is not defined in MODELING['models'].")
+
+    if name == "DeepSurv" and not PYCOX_AVAILABLE:
+        raise ValueError(
+            "DeepSurv requested but PyCox/Torchtuples dependencies are missing."
+        )
+
+    params = model_cfg.get("params", {}).copy()
+    if name in RANDOM_STATE_MODELS:
+        params.setdefault("random_state", SEED)
+
+    model_cls = MODEL_CLASS_MAP.get(name)
+    if model_cls is None:
+        raise ValueError(f"No registered class for model '{name}'.")
+
+    return model_cls(**params)
+
+
+def _build_stacking_model():
+    """Construct a sksurv.meta.Stacking estimator from config settings."""
+
+    stacking_cfg = MODELING.get("stacking", {})
+    if not stacking_cfg.get("enabled"):
+        return None, None
+
+    base_names = stacking_cfg.get("base_models", [])
+    meta_name = stacking_cfg.get("meta_model")
+    if not base_names or not meta_name:
+        raise ValueError("Stacking requires both 'base_models' and 'meta_model'.")
+
+    base_estimators = []
+    for base_name in base_names:
+        try:
+            base_estimators.append((base_name, _build_model_from_config(base_name)))
+        except ValueError as err:
+            print(f"[WARN] Stacking base model skipped: {err}")
+
+    if not base_estimators:
+        raise ValueError("No valid base models remain for stacking after validation.")
+
+    meta_estimator = _build_model_from_config(meta_name)
+    probabilities = stacking_cfg.get("probabilities", True)
+    stacking_name = stacking_cfg.get("name", "Stacking")
+
+    stacking_model = Stacking(
+        meta_estimator=meta_estimator,
+        base_estimators=base_estimators,
+        probabilities=probabilities,
+    )
+
+    return stacking_name, stacking_model
 
 
 def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **params):
@@ -360,7 +174,7 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         )
 
     # Config
-    config = PYCOX_DEEPSURV_PARAMS.copy()
+    config = MODELING['models']['DeepSurv']['params'].copy()
     config.update(params)
 
     hidden_layers = config["hidden_layers"]
@@ -376,8 +190,8 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     lr_patience = config.get("lr_patience", 25)
 
     # Preprocessing
-    durations = np.array([y[1] for y in y_train], dtype=np.float32)
-    events = np.array([y[0] for y in y_train], dtype=np.float32)
+    durations_full = np.array([y[1] for y in y_train], dtype=np.float32)
+    events_full = np.array([y[0] for y in y_train], dtype=np.float32)
 
     scaler = StandardScaler()
     X_train_np = X_train.values if hasattr(X_train, "values") else X_train
@@ -386,16 +200,23 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
     if X_val is None or y_val is None:
         split = int(0.8 * len(X_train_scaled))
         X_val_scaled = X_train_scaled[split:]
-        val_durations = durations[split:]
-        val_events = events[split:]
+        val_durations = durations_full[split:]
+        val_events = events_full[split:]
+        y_val_struct = y_train[split:]
+
         X_train_scaled = X_train_scaled[:split]
-        durations = durations[:split]
-        events = events[:split]
+        durations = durations_full[:split]
+        events = events_full[:split]
+        y_train_struct = y_train[:split]
     else:
         X_val_np = X_val.values if hasattr(X_val, "values") else X_val
         X_val_scaled = scaler.transform(X_val_np).astype(np.float32)
         val_durations = np.array([y[1] for y in y_val], dtype=np.float32)
         val_events = np.array([y[0] for y in y_val], dtype=np.float32)
+        y_val_struct = y_val
+        durations = durations_full
+        events = events_full
+        y_train_struct = y_train
 
     # Label transformation
     labtrans = LabTransCoxTime()
@@ -445,8 +266,8 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
         val_pred = model.predict(X_val_scaled).flatten()
 
         try:
-            cindex_train = concordance_index_ipcw(y_train, y_train, train_pred)[0]
-            cindex_val = concordance_index_ipcw(y_train, y_val, val_pred)[0]
+            cindex_train = concordance_index_ipcw(y_train_struct, y_train_struct, train_pred)[0]
+            cindex_val = concordance_index_ipcw(y_train_struct, y_val_struct, val_pred)[0]
         except:
             cindex_train = np.nan
             cindex_val = np.nan
@@ -469,3 +290,133 @@ def train_pycox_deepsurv_model(X_train, y_train, X_val=None, y_val=None, **param
             break
 
     return PyCoxWrapper(model, scaler, labtrans)
+
+
+def train_cox_model(X_train, y_train, **params):
+    """Train a Cox Proportional Hazards model with config parameters"""
+    config = MODELING['models']['Cox']['params'].copy()
+    config.update(params)
+    cox = CoxPHSurvivalAnalysis(**config)
+    cox.fit(X_train, y_train)
+    return cox
+
+
+def train_rsf_model(X_train, y_train, **params):
+    """Train a Random Survival Forest model with config parameters"""
+    config = MODELING['models']['RSF']['params'].copy()
+    config.update(params)
+    rsf = RandomSurvivalForest(random_state=SEED, **config)
+    rsf.fit(X_train, y_train)
+    return rsf
+
+
+def train_gradient_boosting_model(X_train, y_train, **params):
+    """Train a Gradient Boosting Survival Analysis model with config parameters"""
+    config = MODELING['models']['GradientBoosting']['params'].copy()
+    config.update(params)
+    xgb_surv = GradientBoostingSurvivalAnalysis(random_state=SEED, **config)
+    xgb_surv.fit(X_train, y_train)
+    return xgb_surv
+
+
+def train_coxnet_model(X_train, y_train, **params):
+    """Train a Cox model with elastic net regularization (CoxNet)"""
+    config = MODELING['models']['CoxNet']['params'].copy()
+    config.update(params)
+    coxnet = CoxnetSurvivalAnalysis(**config)
+    coxnet.fit(X_train, y_train)
+    return coxnet
+
+
+def train_extra_trees_model(X_train, y_train, **params):
+    """Train an Extra Survival Trees model"""
+    config = MODELING['models']['ExtraTrees']['params'].copy()
+    config.update(params)
+    extra_trees = ExtraSurvivalTrees(random_state=SEED, **config)
+    extra_trees.fit(X_train, y_train)
+    return extra_trees
+
+
+def train_componentwise_gb_model(X_train, y_train, **params):
+    """Train a Componentwise Gradient Boosting model"""
+    config = MODELING['models']['ComponentwiseGB']['params'].copy()
+    config.update(params)
+    comp_gb = ComponentwiseGradientBoostingSurvivalAnalysis(random_state=SEED, **config)
+    comp_gb.fit(X_train, y_train)
+    return comp_gb
+
+
+def load_training_dataset(dataset_path):
+    """Load the prepared training dataset."""
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(
+            f"ERROR: Prepared dataset not found! Expected file: {dataset_path}. Please run: python 1_prepare_data.py first."
+        )
+
+    with open(dataset_path, "rb") as f:
+        dataset = pickle.load(f)
+
+    print("Dataset successfully loaded")
+    print(f"{dataset['metadata']['n_samples_train']} training samples")
+    print(f"{dataset['metadata']['n_features']} features")
+
+    return dataset
+
+
+def load_training_dataset_csv(X_train_path, y_train_path):
+    """Load the training dataset from CSV files."""
+    if not os.path.exists(X_train_path) or not os.path.exists(y_train_path):
+        raise FileNotFoundError(
+            f"ERROR: Training dataset files not found! Expected files: {X_train_path}, {y_train_path}."
+        )
+
+    X_train = pd.read_csv(X_train_path)
+    y_train = pd.read_csv(y_train_path)
+
+    # Exclude patient IDs from X_train
+    if "ID" in X_train.columns:
+        X_train = X_train.drop(columns=["ID"])
+    if "ID" in y_train.columns:
+        y_train = y_train.drop(columns=["ID"])
+
+    # Convert y_train to structured array
+    if "OS_STATUS" in y_train.columns and "OS_YEARS" in y_train.columns:
+        y_train = Surv.from_arrays(
+            event=y_train["OS_STATUS"].astype(bool),
+            time=y_train["OS_YEARS"].astype(float),
+        )
+    else:
+        raise ValueError(
+            "ERROR: y_train must contain 'OS_STATUS' and 'OS_YEARS' columns."
+        )
+
+    print("Training dataset successfully loaded")
+    print(f"{X_train.shape[0]} training samples")
+    print(f"{X_train.shape[1]} features")
+
+    return X_train, y_train
+
+
+def get_survival_models():
+    """Return survival estimators configured in `config.py`, including stacking."""
+
+    models = {}
+    for name, config in MODELING["models"].items():
+        if not config.get("enabled", False):
+            continue
+
+        try:
+            models[name] = _build_model_from_config(name)
+        except ValueError as err:
+            print(f"[WARN] {err}")
+
+    stacking_cfg = MODELING.get("stacking", {})
+    if stacking_cfg.get("enabled"):
+        try:
+            stacking_name, stacking_model = _build_stacking_model()
+            if stacking_model is not None:
+                models[stacking_name] = stacking_model
+        except ValueError as err:
+            print(f"[WARN] Unable to configure stacking model: {err}")
+
+    return models
