@@ -46,7 +46,7 @@ def main():
     best_params = {}
 
     for model_name, model_cfg in enabled_models:
-        print(f"\n⚙ Optimizing {model_name}...")
+        print(f"\nOptimizing {model_name}...")
         model_class = MODEL_CLASS_REGISTRY.get(model_name)
 
         if model_class is None:

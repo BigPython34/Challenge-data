@@ -19,7 +19,7 @@ from sklearn.model_selection import GroupKFold, KFold
 from sksurv.metrics import concordance_index_ipcw
 from src.modeling.train import load_training_dataset_csv, get_survival_models
 from src.modeling.error_analysis import analyze_cv_errors
-from src.config import TAU, PREPROCESSING, EXPERIMENT
+from src.config import TAU
 from src.utils.experiment import compute_tag_with_signature, ensure_experiment_dir
 
 
@@ -148,14 +148,12 @@ def main():
         print(f"  Base OOF IPCW: {name:<20} = {score:.5f}")
         training_report["base_scores"][name] = float(score)
 
-    ensemble_results = []
     for k in range(2, len(valid_models) + 1):
         for combo in itertools.combinations(valid_models, k):
             combo_name = " + ".join(combo)
             combo_ranks = oof_predictions[list(combo)].rank()
             ensemble_rank_score = combo_ranks.mean(axis=1).values
             ens_ipcw = concordance_index_ipcw(y, y, ensemble_rank_score, tau=TAU)[0]
-            ensemble_results.append((combo_name, k, ens_ipcw))
             summary_rows.append({"name": combo_name, "size": k, "score": ens_ipcw})
             print(f"  Ensemble OOF IPCW: {combo_name} = {ens_ipcw:.5f}")
 

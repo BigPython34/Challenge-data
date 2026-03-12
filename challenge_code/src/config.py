@@ -1,24 +1,8 @@
-"""
-Configuration centralisée pour le pipeline AML survival analysis.
+"""Configuration centralisée du pipeline d'analyse de survie AML.
 
-Organisation du fichier:
-========================
- 1. PATHS & SEEDS           - Chemins, seed, répertoires
- 2. DATA SOURCES            - Fichiers d'entrée, Beat AML fusion
- 3. CLINICAL CONFIG         - Colonnes cliniques, ranges, ratios, seuils
- 4. FEATURE LISTS           - CORE_FEATURES, EXPLORATORY_FEATURES
- 5. CYTOGENETIC CONFIG      - Patterns, flags, parsing, ELN
- 6. MOLECULAR CONFIG        - Gènes, pathways, VAF, external scores
- 7. FEATURE ENGINEERING     - Toggles, interactions, redundancy, pruning
- 8. PREPROCESSING           - Imputation (early + pipeline), scaling
- 9. EXPERIMENT              - Flags expérimentaux
-10. MODELING                - Modèles, hyperparams, stacking, ensemble
-
-Tips de navigation:
--------------------
-- Chercher "# ===" pour trouver les en-têtes de section
-- Les dictionnaires principaux: PREPROCESSING, MODELING, FEATURE_SET_POLICY
-- Pour l'imputation: voir PREPROCESSING["early_imputation"] et PREPROCESSING["imputer"]
+Les principales sections couvrent les chemins, les données, la configuration
+clinique et moléculaire, le feature engineering, le préprocessing et les
+paramètres de modélisation.
 """
 import os
 from pathlib import Path
@@ -95,7 +79,6 @@ ID_COLUMNS = {
 # =============================================================================
 
 CLINICAL_NUMERIC_COLUMNS = ["BM_BLAST", "WBC", "ANC", "MONOCYTES", "HB", "PLT"]
-
 CLINICAL_RANGES = {
     "BM_BLAST": (0, 100),
     "WBC": (0, 400),
@@ -129,7 +112,6 @@ CLINICAL_THRESHOLDS = {
 
 CLINICAL_LOG_COLUMNS = ["WBC", "PLT", "ANC", "MONOCYTES"]
 CREATE_LOG_COLUMNS = False
-
 CLINICAL_COMPOSITE_SCORES = {
     "cytopenia_score": {
         "components": ["anemia_moderate", "thrombocytopenia_moderate", "neutropenia_moderate"],
@@ -509,11 +491,8 @@ PRUNING_POLICY = {
 # =============================================================================
 
 PREPROCESSING = {
-    # --- Mise à l'échelle de la cible (OS_YEARS) ---
-    "target_time_multiplier": 1,  # Multiplicateur pour OS_YEARS (ex: 1.0 = aucune modif, 12.0 = conversion en mois)
-
-    # --- Stratégie d'imputation globale ---
-    "imputer": "iterative",   # "iterative", "knn", "simple"
+    "target_time_multiplier": 1,
+    "imputer": "iterative",
     "knn": {"n_neighbors": 4},
     "iterative": {
         "max_iter": 100,
@@ -522,18 +501,6 @@ PREPROCESSING = {
         "random_state": SEED,
     },
 
-    # --- Imputation précoce (AVANT feature engineering) ---
-    # Permet de remplir les colonnes cliniques brutes pour que les ratios soient calculables.
-    #
-    # NOUVEAU FLOW (1_prepare_data_v2.py):
-    # 1. Créer les colonnes auxiliaires basiques (mut_*, eln_cyto_*) via auxiliary_features.py
-    # 2. Utiliser ces colonnes pour guider l'IterativeImputer (use_auxiliary_columns=True)
-    # 3. Imputer les colonnes cliniques (WBC, HB, PLT, etc.)
-    # 4. Feature Engineering complet
-    #
-    # Les colonnes auxiliaires permettent à l'imputer d'apprendre des corrélations comme:
-    # - mut_FLT3 → WBC élevé
-    # - eln_cyto_adverse → HB bas
     "early_imputation": {
         "enabled": False,
         "strategy": "iterative",
